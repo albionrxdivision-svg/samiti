@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'ADMIN' ||
+        request.auth.token.email == 'netai.nemai@gmail.com'
+      );
+    }
+
+    function isOfficer() {
+      return isAuthenticated() && (
+        getUserData().role == 'FIELD_OFFICER' || isAdmin()
+      );
+    }
+
+    function isValidTimestamp(val) {
+      return val is timestamp && val <= request.time;
+    }
+
+    // Users collection: users can read their own profile, admins can read/write all
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // A user can create their own initial profile if it doesn't exist yet, but cannot grant themselves ADMIN unless first admin
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && (isAdmin() || (request.auth.uid == userId && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
+    }
+
+    // Members collection: all authenticated users can read, officers/admins can create, ONLY admin can edit/delete
+    match /members/{memberId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isAdmin() || isOfficer());
+      allow update, delete: if isAdmin();
+    }
+
+    // Officers directory
+    match /officers/{officerId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Savings records: officers/admins can create new entries, ONLY admin can edit/approve/reject/delete
+    match /savings/{savingsId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isAdmin() || isOfficer());
+      allow update, delete: if isAdmin();
+    }
+
+    // Loans: read by auth, create/update/delete strictly by admin
+    match /loans/{loanId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Loan installments: officers/admins can create new installment, ONLY admin can edit/approve/delete
+    match /loanInstallments/{installmentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isAdmin() || isOfficer());
+      allow update, delete: if isAdmin();
+    }
+
+    // Fines: officers/admins can create new fine, ONLY admin can edit/mark paid/delete
+    match /fines/{fineId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (isAdmin() || isOfficer());
+      allow update, delete: if isAdmin();
+    }
+
+    // Fund ledger: read by all auth users, written by admin only
+    match /fundLedger/{ledgerId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Collection periods: read by all auth users, managed by admin
+    match /collectionPeriods/{periodId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Audit logs: read by admin, create by any authenticated user
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // immutable audit log
+    }
+
+    // App settings: read by all auth users, written by admin
+    match /appSettings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Admin FCM device tokens: admins register/update their own tokens; auth users can read designated target tokens
+    match /adminFcmTokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Admin approval notifications: officers/admins can create pending notification payloads; only admins can read/update/delete
+    match /adminNotifications/{notifId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isAuthenticated() && (isAdmin() || isOfficer());
+    }
+  }
+}

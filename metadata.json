@@ -1,0 +1,6 @@
+{
+  "name": "একতা সমিতি",
+  "description": "যাদবপুর যুব সমাজ সমিতি - সাপ্তাহিক সঞ্চয় ও ঋণ ব্যবস্থাপনা",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

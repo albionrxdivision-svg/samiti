@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">একতা সমিতি</string>
+    <string name="default_notification_channel_id">admin_approval_channel</string>
+    <string name="default_notification_channel_name">অ্যাডমিন অনুমোদন বিজ্ঞপ্তি</string>
+    <string name="default_notification_channel_desc">মাঠ কর্মকর্তা নতুন লেনদেন জমা দিলে অ্যাডমিনকে তাৎক্ষণিক বিজ্ঞপ্তি পাঠায়</string>
+</resources>
