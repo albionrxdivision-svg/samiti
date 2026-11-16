@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.Credential
@@ -64,62 +65,68 @@ fun AuthScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(ekotaSilverBackgroundBrush()),
+            .background(ekotaSilverBackgroundBrush())
+            .imePadding(),
         contentAlignment = Alignment.Center
     ) {
         Card(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 520.dp)
-                .padding(vertical = 20.dp, horizontal = 8.dp),
-            shape = RoundedCornerShape(24.dp),
+                .fillMaxWidth(0.88f)
+                .widthIn(max = 380.dp)
+                .padding(vertical = 12.dp, horizontal = 6.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Cooperative Emblem
-                Box(
-                    modifier = Modifier
-                        .size(90.dp)
-                        .clip(CircleShape)
-                        .background(EmeraldGreenLight.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center
+                // Compact Emblem + Title Row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ekota_samiti_icon_1794375763534),
-                        contentDescription = "একতা সমিতি লোগো",
+                    Box(
                         modifier = Modifier
-                            .size(76.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
-                    )
+                            .background(EmeraldGreenLight.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ekota_samiti_icon_1794375763534),
+                            contentDescription = "একতা সমিতি লোগো",
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "যাদবপুর যুব সমাজ সমিতি",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = HeaderSlateNavy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "একতা সমিতি • লগইন",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "যাদবপুর যুব সমাজ সমিতি",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = HeaderSlateNavy,
-                    textAlign = TextAlign.Center
-                )
-
-                Text(
-                    text = "একতা সমিতি - সাপ্তাহিক সঞ্চয় ও ঋণ ব্যবস্থাপনা",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 val passwordManager = remember { com.example.util.PasswordManager.forContext(context) }
 
@@ -128,59 +135,61 @@ fun AuthScreen(
                 var passwordVisible by remember { mutableStateOf(false) }
                 var selectedTabIndex by remember { mutableStateOf(0) } // 0: Admin, 1: Field Officer
 
-                // Tabs for Admin vs Field Officer Login
-                TabRow(
-                    selectedTabIndex = selectedTabIndex,
-                    containerColor = Color.Transparent,
-                    contentColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth()
+                // Compact segmented role selector (48dp height for touch accessibility)
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
                 ) {
-                    Tab(
-                        selected = selectedTabIndex == 0,
-                        onClick = {
-                            selectedTabIndex = 0
-                            username = ""
-                            password = ""
-                            errorMessage = null
-                        },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        text = {
-                            Text(
-                                "অ্যাডমিন লগইন",
-                                fontWeight = if (selectedTabIndex == 0) FontWeight.Bold else FontWeight.Medium
-                            )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val roles = listOf("অ্যাডমিন" to 0, "মাঠ কর্মকর্তা" to 1)
+                        roles.forEach { (label, idx) ->
+                            val selected = selectedTabIndex == idx
+                            Surface(
+                                onClick = {
+                                    selectedTabIndex = idx
+                                    username = ""
+                                    password = ""
+                                    errorMessage = null
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) EmeraldGreenPrimary else Color.Transparent,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 1,
-                        onClick = {
-                            selectedTabIndex = 1
-                            username = ""
-                            password = ""
-                            errorMessage = null
-                        },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        text = {
-                            Text(
-                                "মাঠ কর্মকর্তা",
-                                fontWeight = if (selectedTabIndex == 1) FontWeight.Bold else FontWeight.Medium
-                            )
-                        }
-                    )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Username TextField
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
                     label = {
-                        Text(if (selectedTabIndex == 0) "অ্যাডমিন আইডি / ইউজারনেম" else "মাঠ কর্মকর্তা আইডি / নাম")
+                        Text(if (selectedTabIndex == 0) "অ্যাডমিন আইডি" else "কর্মকর্তা আইডি")
                     },
                     singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("username_input"),
@@ -188,19 +197,21 @@ fun AuthScreen(
                         Icon(
                             imageVector = Icons.Default.AccountCircle,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Password TextField
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("পাসওয়ার্ড (Password)") },
+                    label = { Text("পাসওয়ার্ড") },
                     singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
                     visualTransformation = if (passwordVisible)
                         androidx.compose.ui.text.input.VisualTransformation.None
                     else
@@ -212,7 +223,8 @@ fun AuthScreen(
                         Icon(
                             imageVector = Icons.Default.Security,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
                         )
                     },
                     trailingIcon = {
@@ -227,7 +239,7 @@ fun AuthScreen(
                 )
 
                 if (errorMessage != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = MaterialTheme.colorScheme.errorContainer,
@@ -237,15 +249,15 @@ fun AuthScreen(
                             text = errorMessage ?: "",
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(8.dp),
+                            modifier = Modifier.padding(6.dp),
                             textAlign = TextAlign.Center
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Login Button
+                // Compact Login Button
                 Button(
                     onClick = {
                         val u = username.trim()
@@ -256,7 +268,6 @@ fun AuthScreen(
                         }
 
                         if (selectedTabIndex == 0) {
-                            // Admin verification via PasswordManager
                             if (passwordManager.verifyAdminLogin(u, p)) {
                                 com.example.data.model.AuthSession.setAdminSession(context)
                                 onAuthSuccess()
@@ -264,7 +275,6 @@ fun AuthScreen(
                                 errorMessage = "ভুল অ্যাডমিন আইডি বা পাসওয়ার্ড!"
                             }
                         } else {
-                            // Field Officer verification via PasswordManager
                             if (passwordManager.verifyOfficerLogin(u, p)) {
                                 com.example.data.model.AuthSession.setOfficerSession(u, context)
                                 onAuthSuccess()
@@ -275,16 +285,16 @@ fun AuthScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
+                        .height(48.dp)
                         .testTag("login_button"),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = EmeraldGreenPrimary,
                         contentColor = Color.White
                     )
                 ) {
                     Text(
-                        text = if (selectedTabIndex == 0) "অ্যাডমিন হিসেবে প্রবেশ করুন" else "মাঠ কর্মকর্তা হিসেবে প্রবেশ করুন",
+                        text = if (selectedTabIndex == 0) "অ্যাডমিন প্রবেশ করুন" else "কর্মকর্তা প্রবেশ করুন",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )

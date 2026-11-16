@@ -423,70 +423,6 @@ fun WeeklySavingsScreen(
                 // TAB 0: WEEKLY SAVINGS COLLECTION FORM (Firestore Members)
                 // -------------------------------------------------------------
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Vibrant Collector & Week Summary Strip
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .testTag("savings_active_submitter_banner")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(Brush.linearGradient(colors = CardTealGradient))
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PersonPin,
-                                    contentDescription = "জমাদানকারী",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column {
-                                    Text(
-                                        text = "জমাদানকারী: $activeSubmitterName",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = if (isAdmin) "অ্যাডমিন সরাসরি অনুমোদন" else "মাঠ কর্মকর্তা • অনুমোদনযোগ্য এন্ট্রি",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.90f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color.Black.copy(alpha = 0.20f)
-                            ) {
-                                Text(
-                                    text = BengaliUtils.formatTaka(formLiveTotal),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                                )
-                            }
-                        }
-                    }
 
                     // Toggle: All-Members Batch Form vs Single-Member Deposit Form
                     Row(
@@ -969,32 +905,6 @@ fun WeeklySavingsScreen(
                 // -------------------------------------------------------------
                 // TAB 1: FULL MATRIX SAVINGS SHEET (Pinned Serial & Name)
                 // -------------------------------------------------------------
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isAdmin)
-                                "বামের 'ক্রমিক নং' ও 'নাম' স্থির থাকবে। টাকার ঘরে ট্যাপ করে টাকা এবং উপরের তারিখে ট্যাপ করে তারিখ আপডেট করুন।"
-                            else
-                                "বামের 'ক্রমিক নং' ও 'নাম' স্থির থাকবে। পূর্বের লেখা এডিট বা ডিলিট শুধুমাত্র অ্যাডমিন করতে পারবেন।",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-
                 if (members.isEmpty()) {
                     Box(
                         modifier = Modifier
