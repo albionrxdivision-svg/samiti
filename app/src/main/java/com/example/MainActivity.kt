@@ -21,6 +21,7 @@ import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.signOut
 import com.example.ui.navigation.MainAppNavigation
 import com.example.ui.theme.EkotaSamitiTheme
+import com.example.util.configureAppCheck
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
@@ -30,6 +31,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         NotificationHelper.ensureNotificationChannel(this)
         handleDeepLinkIntent(intent)

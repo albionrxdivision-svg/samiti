@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -131,7 +132,7 @@ fun LoanManagementScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White,
                     actionIconContentColor = Color.White
@@ -144,7 +145,7 @@ fun LoanManagementScreen(
                     onClick = { selectedTab = 3 },
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
                     text = { Text("নতুন ঋণ বিতরণ", fontWeight = FontWeight.Bold) },
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = CardPurpleGradient.first(),
                     contentColor = Color.White,
                     modifier = Modifier.testTag("new_loan_fab")
                 )
@@ -155,7 +156,7 @@ fun LoanManagementScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
                 .padding(16.dp)
         ) {
             // Loan Summary Header Card (Vibrant Gradient matching reference card palette)
@@ -177,8 +178,8 @@ fun LoanManagementScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         SummaryColumn("মোট বিতরণ", BengaliUtils.formatTaka(totalDisbursed), Color.White, Modifier.weight(1f))
-                        SummaryColumn("মোট আদায়", BengaliUtils.formatTaka(totalPaid), Color(0xFFBBF7D0), Modifier.weight(1f))
-                        SummaryColumn("অবশিষ্ট বকেয়া", BengaliUtils.formatTaka(totalDue), Color(0xFFFDE68A), Modifier.weight(1f))
+                        SummaryColumn("মোট আদায়", BengaliUtils.formatTaka(totalPaid), Color.White, Modifier.weight(1f))
+                        SummaryColumn("অবশিষ্ট বকেয়া", BengaliUtils.formatTaka(totalDue), Color.White, Modifier.weight(1f))
                     }
                 }
             }
@@ -224,46 +225,89 @@ fun LoanManagementScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Filter & Admin Action Tabs
-            ScrollableTabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.primary,
-                edgePadding = 0.dp
+            // Filter & Admin Action Tabs (fitted cleanly within screen width without clipping)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    text = { Text("সকল ঋণ", maxLines = 1, softWrap = false) },
-                    modifier = Modifier.testTag("all_loans_tab")
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    text = { Text("চলতি ঋণ", maxLines = 1, softWrap = false) },
-                    modifier = Modifier.testTag("active_loans_tab")
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    text = { Text("পরিশোধিত", maxLines = 1, softWrap = false) },
-                    modifier = Modifier.testTag("paid_loans_tab")
-                )
-                if (isAdmin) {
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = Color.Transparent,
+                    contentColor = HeaderSlateNavy,
+                    divider = {}
+                ) {
                     Tab(
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 },
-                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        selectedContentColor = HeaderSlateNavy,
                         unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        text = { Text("নতুন ঋণ বিতরণ", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) },
-                        modifier = Modifier.testTag("new_loan_tab")
+                        text = {
+                            Text(
+                                text = "সব ঋণ",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        modifier = Modifier.testTag("all_loans_tab")
                     )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        selectedContentColor = HeaderSlateNavy,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = {
+                            Text(
+                                text = "চলতি",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        modifier = Modifier.testTag("active_loans_tab")
+                    )
+                    Tab(
+                        selected = selectedTab == 2,
+                        onClick = { selectedTab = 2 },
+                        selectedContentColor = HeaderSlateNavy,
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = {
+                            Text(
+                                text = "পরিশোধিত",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        modifier = Modifier.testTag("paid_loans_tab")
+                    )
+                    if (isAdmin) {
+                        Tab(
+                            selected = selectedTab == 3,
+                            onClick = { selectedTab = 3 },
+                            selectedContentColor = CardPurpleGradient.first(),
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = {
+                                Text(
+                                    text = "নতুন ঋণ",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            modifier = Modifier.testTag("new_loan_tab")
+                        )
+                    }
                 }
             }
 
@@ -274,6 +318,7 @@ fun LoanManagementScreen(
                     members = members,
                     defaultInterestRatePercent = appSettings.interestRatePercent,
                     isSaving = isSavingLoan,
+                    existingLoans = loans,
                     onDistribute = { newLoan, optionalMember ->
                         viewModel.createLoan(
                             loan = newLoan,
@@ -324,14 +369,18 @@ fun LoanManagementScreen(
                     contentPadding = PaddingValues(bottom = 80.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(filteredLoans, key = { it.id }) { loan ->
+                    itemsIndexed(filteredLoans, key = { _, loan -> loan.id }) { index, loan ->
                         val loanHistory = installments.filter { it.loanId == loan.id && !it.isMissed }
                         val todayStr = BengaliUtils.getCurrentDateStr()
-                        val submittedThisWeek = installments.any {
+                        val thisWeekInstallment = installments.firstOrNull {
                             it.loanId == loan.id &&
                                 it.status != "REJECTED" &&
                                 SavingsAndFineCalculator.isSameWeek(it.installmentDate, todayStr)
                         }
+                        val submittedThisWeek = thisWeekInstallment != null
+                        val latestCollector = thisWeekInstallment?.officerName?.ifBlank { "" }
+                            ?: loanHistory.lastOrNull()?.officerName?.ifBlank { "" }
+                            ?: ""
                         val hasPendingInstSync = installments.any { it.loanId == loan.id && it.id in pendingInstallmentIds } ||
                             (loan.id in syncStatus.pendingDocumentIds)
                         LoanCard(
@@ -340,6 +389,8 @@ fun LoanManagementScreen(
                             isAdmin = isAdmin,
                             isPendingSync = hasPendingInstSync,
                             isSubmittedThisWeek = submittedThisWeek,
+                            cardAccentIndex = index,
+                            latestCollectorName = latestCollector,
                             onCardClick = { loanDetailsTarget = loan },
                             onCollectInstallment = { loanToPayInstallment = loan },
                             onMarkMissedInstallment = { loanToMarkMissed = loan }
@@ -495,13 +546,25 @@ fun LoanCard(
     isAdmin: Boolean = false,
     isPendingSync: Boolean = false,
     isSubmittedThisWeek: Boolean = false,
+    cardAccentIndex: Int = 0,
+    latestCollectorName: String = "",
     onCardClick: () -> Unit,
     onCollectInstallment: () -> Unit,
     onMarkMissedInstallment: () -> Unit = {}
 ) {
+    val isDark = LocalIsDarkEkotaTheme.current
+    val accent = VibrantCardAccents[cardAccentIndex % VibrantCardAccents.size]
+    val cardContainerColor = when {
+        isDark -> MaterialTheme.colorScheme.surface
+        isSubmittedThisWeek -> accent.softSurface
+        else -> accent.softSurface.copy(alpha = 0.65f)
+    }
+    val cardBorderColor = accent.gradient.first().copy(alpha = if (isSubmittedThisWeek) 0.72f else 0.36f)
+
     Card(
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = cardContainerColor),
+        border = BorderStroke(if (isSubmittedThisWeek) 1.4.dp else 1.dp, cardBorderColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier
             .fillMaxWidth()
@@ -520,16 +583,18 @@ fun LoanCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.tertiaryContainer),
+                            .background(Brush.linearGradient(colors = accent.gradient)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = BengaliUtils.toBengaliDigits(loan.memberSerial),
                             style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
@@ -538,7 +603,7 @@ fun LoanCard(
                             text = loan.memberName,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = if (!isDark) accent.accentInk else MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -549,6 +614,16 @@ fun LoanCard(
                             maxLines = 1,
                             softWrap = false
                         )
+                        if (latestCollectorName.isNotBlank() || isSubmittedThisWeek) {
+                            Text(
+                                text = "জমাদানকারী: ${latestCollectorName.ifBlank { "অ্যাডমিন" }}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) accent.gradient.last() else accent.accentInk,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
@@ -767,8 +842,8 @@ fun LoanCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Installment Collection & Missed Week Buttons
-            if (loan.remainingLoan > 0) {
+            // Installment Collection & Missed Week Buttons (Hidden once submitted this week)
+            if (loan.remainingLoan > 0 && !isSubmittedThisWeek) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -781,7 +856,7 @@ fun LoanCard(
                             .testTag("collect_installment_btn_${loan.id}"),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = EmeraldGreenPrimary,
+                            containerColor = accent.gradient.first(),
                             contentColor = Color.White
                         ),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
@@ -820,6 +895,34 @@ fun LoanCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                    }
+                }
+            } else if (loan.remainingLoan > 0 && isSubmittedThisWeek) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = ekotaBadgeSuccessBg(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("loan_installment_submitted_pill_${loan.id}")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = ekotaSuccessTextColor(),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "এই সপ্তাহের কিস্তি জমা সম্পন্ন ✓",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = ekotaSuccessTextColor()
+                        )
                     }
                 }
             }
@@ -984,12 +1087,20 @@ fun LoanHistoryDialog(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = "কিস্তি ${BengaliUtils.toBengaliDigits(inst.serialNumber)} (${inst.installmentDate})",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (isMissedEntry) ekotaDangerTextColor() else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "কিস্তি ${BengaliUtils.toBengaliDigits(inst.serialNumber)} (${inst.installmentDate})",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isMissedEntry) ekotaDangerTextColor() else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (inst.officerName.isNotBlank()) {
+                                        Text(
+                                            text = "জমাদানকারী: ${inst.officerName}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                                 Text(
                                     text = if (isMissedEntry) "অনুপস্থিত (৳১০ জরিমানা)" else BengaliUtils.formatTaka(inst.amount),
                                     fontWeight = FontWeight.Bold,

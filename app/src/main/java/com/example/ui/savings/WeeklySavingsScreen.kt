@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -45,17 +46,23 @@ fun WeeklySavingsScreen(
     val savingsRecords by viewModel.savingsRecords.collectAsStateWithLifecycle()
     val collectionPeriods by viewModel.collectionPeriods.collectAsStateWithLifecycle()
     val role by viewModel.userRole.collectAsStateWithLifecycle()
+    val currentUserProfile by viewModel.currentUserProfile.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val isSavingBatch by viewModel.isSavingBatch.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
     val pendingSavingsIds by viewModel.pendingSavingsIds.collectAsStateWithLifecycle()
     val isAdmin = role == UserRole.ADMIN
+    val activeSubmitterName = currentUserProfile?.displayName?.ifBlank {
+        if (isAdmin) "অ্যাডমিন" else "মাঠ কর্মকর্তা"
+    } ?: if (isAdmin) "অ্যাডমিন" else "মাঠ কর্মকর্তা"
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
     // 0: Collection Form (default), 1: Savings Matrix Sheet
     var selectedModeTab by remember { mutableIntStateOf(0) }
+    // Inside Collection Form: false = All-Members Batch Form, true = Single-Member Deposit Form
+    var singleFormMode by remember { mutableStateOf(false) }
 
     var showAddDateDialog by remember { mutableStateOf(false) }
     var dateToEdit by remember { mutableStateOf<String?>(null) }
@@ -63,6 +70,7 @@ fun WeeklySavingsScreen(
     var editHeadingDialog by remember { mutableStateOf(false) }
     var memberToEdit by remember { mutableStateOf<Member?>(null) }
     var showAddMemberDialog by remember { mutableStateOf(false) }
+    var showTopMoreMenu by remember { mutableStateOf(false) }
     var successPopupData by remember { mutableStateOf<Pair<String, String?>?>(null) }
 
     // Available collection dates sorted chronologically (defaulting to today for first entry)
@@ -144,6 +152,16 @@ fun WeeklySavingsScreen(
         }
     }
 
+    val hasAnyUnsubmittedMember = remember(activeMembers, selectedDate, savingsRecords) {
+        activeMembers.any { member ->
+            savingsRecords.none {
+                (it.memberId == member.id || it.memberName == member.name) &&
+                    it.status != "REJECTED" &&
+                    SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate)
+            }
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
@@ -188,22 +206,41 @@ fun WeeklySavingsScreen(
                         Icon(Icons.Default.PersonAdd, contentDescription = "নতুন সদস্য যোগ")
                     }
                     if (isAdmin) {
-                        IconButton(
-                            onClick = { editHeadingDialog = true },
-                            modifier = Modifier.testTag("edit_heading_button")
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = "শিরোনাম পরিবর্তন")
-                        }
-                        IconButton(
-                            onClick = { showAddDateDialog = true },
-                            modifier = Modifier.testTag("add_date_button")
-                        ) {
-                            Icon(Icons.Default.Event, contentDescription = "নতুন কালেকশন তারিখ")
+                        Box {
+                            IconButton(
+                                onClick = { showTopMoreMenu = true },
+                                modifier = Modifier.testTag("savings_more_actions_button")
+                            ) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "আরও অপশন")
+                            }
+                            DropdownMenu(
+                                expanded = showTopMoreMenu,
+                                onDismissRequest = { showTopMoreMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("নতুন কালেকশন তারিখ") },
+                                    leadingIcon = { Icon(Icons.Default.Event, contentDescription = null) },
+                                    modifier = Modifier.testTag("add_date_button"),
+                                    onClick = {
+                                        showTopMoreMenu = false
+                                        showAddDateDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("শিরোনাম পরিবর্তন") },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                    modifier = Modifier.testTag("edit_heading_button"),
+                                    onClick = {
+                                        showTopMoreMenu = false
+                                        editHeadingDialog = true
+                                    }
+                                )
+                            }
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White,
                     actionIconContentColor = Color.White
@@ -211,11 +248,11 @@ fun WeeklySavingsScreen(
             )
         },
         bottomBar = {
-            if (selectedModeTab == 0 && membersUiState is UiState.Success && activeMembers.isNotEmpty()) {
+            if (selectedModeTab == 0 && !singleFormMode && membersUiState is UiState.Success && activeMembers.isNotEmpty()) {
                 Surface(
-                    tonalElevation = 6.dp,
-                    shadowElevation = 8.dp,
-                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 6.dp,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -239,83 +276,112 @@ fun WeeklySavingsScreen(
                             )
                         }
 
-                        Button(
-                            onClick = {
-                                val parsedMap = activeMembers.mapNotNull { member ->
-                                    val submittedSameWeek = savingsRecords.any {
-                                        (it.memberId == member.id || it.memberName == member.name) &&
-                                            it.status != "REJECTED" &&
-                                            SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate)
-                                    }
-                                    if (submittedSameWeek) {
-                                        null
-                                    } else {
-                                        member.id to (amountInputs[member.id]?.toDoubleOrNull() ?: 0.0)
-                                    }
-                                }.toMap()
-                                var lastCatchUpCount = 0
-                                var lastFinesCount = 0
-                                viewModel.submitWeeklySavingsBatch(
-                                    collectionDate = selectedDate,
-                                    memberAmounts = parsedMap,
-                                    onDetails = { catchUpCount, finesGenerated ->
-                                        lastCatchUpCount = catchUpCount
-                                        lastFinesCount = finesGenerated
-                                    },
-                                    onSuccess = { paidCount, totalAmount ->
-                                        val suffix = if (role == UserRole.FIELD_OFFICER) " (অনুমোদনের জন্য পাঠানো হয়েছে)" else ""
-                                        val extras = buildString {
-                                            if (lastCatchUpCount > 0) {
-                                                append("পূর্বের বকেয়া ${BengaliUtils.toBengaliDigits(lastCatchUpCount)} সপ্তাহ কাউন্ট হয়েছে")
-                                            }
-                                            if (lastFinesCount > 0) {
-                                                if (isNotEmpty()) append("\n")
-                                                append("${BengaliUtils.toBengaliDigits(lastFinesCount)}টি ৳১০ জরিমানা যুক্ত হয়েছে")
-                                            }
-                                            if (syncStatus.isCloudAuthenticated && !syncStatus.isOnline) {
-                                                if (isNotEmpty()) append("\n")
-                                                append("অফলাইনে সংরক্ষিত, নেটওয়ার্ক ফিরলে অটো সিঙ্ক হবে")
-                                            }
-                                        }.ifBlank { null }
-                                        successPopupData = Pair(
-                                            "তারিখ: $selectedDate\n${BengaliUtils.toBengaliDigits(paidCount)} জনের মোট ${BengaliUtils.formatTaka(totalAmount)} সঞ্চয় সফলভাবে জমা হয়েছে$suffix",
-                                            extras
-                                        )
-                                    },
-                                    onError = { err ->
-                                        coroutineScope.launch {
-                                            snackbarHostState.showSnackbar(err)
+                        if (hasAnyUnsubmittedMember) {
+                            Button(
+                                onClick = {
+                                    val parsedMap = activeMembers.mapNotNull { member ->
+                                        val submittedSameWeek = savingsRecords.any {
+                                            (it.memberId == member.id || it.memberName == member.name) &&
+                                                it.status != "REJECTED" &&
+                                                SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate)
                                         }
-                                    }
-                                )
-                            },
-                            enabled = !isSavingBatch,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = EmeraldGreenPrimary,
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier
-                                .height(48.dp)
-                                .testTag("submit_weekly_savings_button")
-                        ) {
-                            if (isSavingBatch) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    color = Color.White,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("সংরক্ষণ হচ্ছে...")
-                            } else {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "সঞ্চয় সংরক্ষণ",
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
+                                        if (submittedSameWeek) {
+                                            null
+                                        } else {
+                                            member.id to (amountInputs[member.id]?.toDoubleOrNull() ?: 0.0)
+                                        }
+                                    }.toMap()
+                                    var lastCatchUpCount = 0
+                                    var lastFinesCount = 0
+                                    viewModel.submitWeeklySavingsBatch(
+                                        collectionDate = selectedDate,
+                                        memberAmounts = parsedMap,
+                                        onDetails = { catchUpCount, finesGenerated ->
+                                            lastCatchUpCount = catchUpCount
+                                            lastFinesCount = finesGenerated
+                                        },
+                                        onSuccess = { paidCount, totalAmount ->
+                                            val suffix = if (role == UserRole.FIELD_OFFICER) " (অনুমোদনের জন্য পাঠানো হয়েছে)" else ""
+                                            val extras = buildString {
+                                                if (lastCatchUpCount > 0) {
+                                                    append("পূর্বের বকেয়া ${BengaliUtils.toBengaliDigits(lastCatchUpCount)} সপ্তাহ কাউন্ট হয়েছে")
+                                                }
+                                                if (lastFinesCount > 0) {
+                                                    if (isNotEmpty()) append("\n")
+                                                    append("${BengaliUtils.toBengaliDigits(lastFinesCount)}টি ৳১০ জরিমানা যুক্ত হয়েছে")
+                                                }
+                                                if (syncStatus.isCloudAuthenticated && !syncStatus.isOnline) {
+                                                    if (isNotEmpty()) append("\n")
+                                                    append("অফলাইনে সংরক্ষিত, নেটওয়ার্ক ফিরলে অটো সিঙ্ক হবে")
+                                                }
+                                            }.ifBlank { null }
+                                            successPopupData = Pair(
+                                                "তারিখ: $selectedDate\n${BengaliUtils.toBengaliDigits(paidCount)} জনের মোট ${BengaliUtils.formatTaka(totalAmount)} সঞ্চয় সফলভাবে জমা হয়েছে$suffix",
+                                                extras
+                                            )
+                                        },
+                                        onError = { err ->
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar(err)
+                                            }
+                                        }
+                                    )
+                                },
+                                enabled = !isSavingBatch,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = EmeraldGreenPrimary,
+                                    contentColor = Color.White
+                                ),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("submit_weekly_savings_button")
+                            ) {
+                                if (isSavingBatch) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("সংরক্ষণ হচ্ছে...")
+                                } else {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "সঞ্চয় সংরক্ষণ",
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = ekotaBadgeSuccessBg(),
+                                modifier = Modifier.testTag("weekly_savings_completed_badge")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Verified,
+                                        contentDescription = null,
+                                        tint = ekotaSuccessTextColor(),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "এই সপ্তাহের জমা সম্পন্ন ✓",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ekotaSuccessTextColor(),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
                             }
                         }
                     }
@@ -327,18 +393,18 @@ fun WeeklySavingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
         ) {
             // Mode Switch Tabs: Collection Form vs Savings Sheet
             TabRow(
                 selectedTabIndex = selectedModeTab,
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = HeaderSlateNavy
             ) {
                 Tab(
                     selected = selectedModeTab == 0,
                     onClick = { selectedModeTab = 0 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    selectedContentColor = HeaderSlateNavy,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag("tab_collection_form"),
                     icon = { Icon(Icons.Default.EditNote, contentDescription = null) },
@@ -356,7 +422,7 @@ fun WeeklySavingsScreen(
                 Tab(
                     selected = selectedModeTab == 1,
                     onClick = { selectedModeTab = 1 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    selectedContentColor = HeaderSlateNavy,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag("tab_savings_sheet"),
                     icon = { Icon(Icons.Default.TableChart, contentDescription = null) },
@@ -378,17 +444,183 @@ fun WeeklySavingsScreen(
                 // TAB 0: WEEKLY SAVINGS COLLECTION FORM (Firestore Members)
                 // -------------------------------------------------------------
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Date Selector & Quick Actions Header
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                        modifier = Modifier.fillMaxWidth()
+                    // Vibrant Collector & Week Summary Strip
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("savings_active_submitter_banner")
                     ) {
-                        Column(
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .background(Brush.linearGradient(colors = CardTealGradient))
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PersonPin,
+                                    contentDescription = "জমাদানকারী",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "জমাদানকারী: $activeSubmitterName",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (isAdmin) "অ্যাডমিন সরাসরি অনুমোদন" else "মাঠ কর্মকর্তা • অনুমোদনযোগ্য এন্ট্রি",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White.copy(alpha = 0.90f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.Black.copy(alpha = 0.20f)
+                            ) {
+                                Text(
+                                    text = BengaliUtils.formatTaka(formLiveTotal),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Toggle: All-Members Batch Form vs Single-Member Deposit Form
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = !singleFormMode,
+                            onClick = { singleFormMode = false },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Groups,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = "সকল সদস্য ফর্ম",
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                labelColor = MaterialTheme.colorScheme.onSurface,
+                                iconColor = MaterialTheme.colorScheme.primary,
+                                selectedContainerColor = HeaderSlateNavy,
+                                selectedLabelColor = Color.White,
+                                selectedLeadingIconColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("toggle_batch_form_mode")
+                        )
+                        FilterChip(
+                            selected = singleFormMode,
+                            onClick = { singleFormMode = true },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.PersonAddAlt1,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = "একক জমা ফর্ম",
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                labelColor = MaterialTheme.colorScheme.onSurface,
+                                iconColor = CardTealGradient.first(),
+                                selectedContainerColor = CardTealGradient.first(),
+                                selectedLabelColor = Color.White,
+                                selectedLeadingIconColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("toggle_single_form_mode")
+                        )
+                    }
+
+                    if (singleFormMode) {
+                        SingleMemberSavingsDepositForm(
+                            members = activeMembers,
+                            selectedDate = selectedDate,
+                            savingsRecords = savingsRecords,
+                            isCloudAuthenticated = syncStatus.isCloudAuthenticated,
+                            isOnline = syncStatus.isOnline,
+                            isAdmin = isAdmin,
+                            collectorName = activeSubmitterName,
+                            onDateChange = { updatedDate -> selectedDate = updatedDate },
+                            onSubmitDeposit = { member, colDate, amount ->
+                                viewModel.recordSavings(
+                                    member = member,
+                                    collectionDate = colDate,
+                                    amount = amount,
+                                    onSuccess = {
+                                        val suffix = if (role == UserRole.FIELD_OFFICER) " (অনুমোদনের জন্য পাঠানো হয়েছে)" else ""
+                                        val offlineSub = if (syncStatus.isCloudAuthenticated && !syncStatus.isOnline) {
+                                            "অফলাইনে সংরক্ষিত, নেটওয়ার্ক ফিরলে অটো সিঙ্ক হবে"
+                                        } else null
+                                        successPopupData = Pair(
+                                            "${member.name}-এর $colDate তারিখের ${BengaliUtils.formatTaka(amount)} সঞ্চয় সফলভাবে জমা হয়েছে$suffix",
+                                            offlineSub
+                                        )
+                                    },
+                                    onError = { err ->
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(err) }
+                                    }
+                                )
+                            }
+                        )
+                    } else {
+                        // Date Selector & Quick Actions Header
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -498,7 +730,8 @@ fun WeeklySavingsScreen(
                                             { Icon(Icons.Default.EventAvailable, contentDescription = null, modifier = Modifier.size(16.dp)) }
                                         } else null,
                                         colors = FilterChipDefaults.filterChipColors(
-                                            selectedContainerColor = EmeraldGreenPrimary,
+                                            containerColor = MaterialTheme.colorScheme.surface,
+                                            selectedContainerColor = HeaderSlateNavy,
                                             selectedLabelColor = Color.White,
                                             selectedLeadingIconColor = Color.White,
                                             labelColor = MaterialTheme.colorScheme.onSurface
@@ -715,7 +948,7 @@ fun WeeklySavingsScreen(
                                     contentPadding = PaddingValues(12.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    items(activeMembers, key = { it.id }) { member ->
+                                    itemsIndexed(activeMembers, key = { _, m -> m.id }) { index, member ->
                                         val existing = savingsMap["${member.id}_$selectedDate"]
                                             ?: savingsMap["${member.name}_$selectedDate"]
                                         val submittedThisWeek = remember(member.id, selectedDate, savingsRecords) {
@@ -741,6 +974,7 @@ fun WeeklySavingsScreen(
                                             isAdmin = isAdmin,
                                             isSubmittedThisWeek = submittedThisWeek,
                                             isPendingSync = existing != null && (existing.id in pendingSavingsIds),
+                                            cardAccentIndex = index,
                                             onAmountChange = { newText ->
                                                 amountInputs[member.id] = newText
                                             }
@@ -749,6 +983,7 @@ fun WeeklySavingsScreen(
                                 }
                             }
                         }
+                    }
                     }
                 }
             } else {

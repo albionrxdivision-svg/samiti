@@ -1,5 +1,6 @@
 package com.example.ui.ledger
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -60,7 +61,7 @@ fun DepositLedgerScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 )
@@ -70,7 +71,7 @@ fun DepositLedgerScreen(
             if (role == UserRole.ADMIN) {
                 FloatingActionButton(
                     onClick = { showAddEntryDialog = true },
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = CardTealGradient.first(),
                     contentColor = Color.White,
                     modifier = Modifier.testTag("add_ledger_entry_fab")
                 ) {
@@ -83,7 +84,7 @@ fun DepositLedgerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
                 .padding(16.dp)
         ) {
             // Balance Card with vibrant gradient
@@ -141,8 +142,8 @@ fun DepositLedgerScreen(
                                 Text(
                                     text = BengaliUtils.formatTaka(totalIn),
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFDCFCE7),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White,
                                     maxLines = 1,
                                     softWrap = false,
                                     overflow = TextOverflow.Ellipsis
@@ -155,7 +156,8 @@ fun DepositLedgerScreen(
                                 Text(
                                     text = "মোট খরচ/বিতরণ (Out)",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color.White.copy(alpha = 0.94f),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White.copy(alpha = 0.95f),
                                     maxLines = 1,
                                     softWrap = false,
                                     overflow = TextOverflow.Ellipsis
@@ -163,8 +165,8 @@ fun DepositLedgerScreen(
                                 Text(
                                     text = BengaliUtils.formatTaka(totalOut),
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFFEF08A),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White,
                                     maxLines = 1,
                                     softWrap = false,
                                     overflow = TextOverflow.Ellipsis
@@ -188,7 +190,7 @@ fun DepositLedgerScreen(
                 text = "লেজার লেনদেনের তালিকা",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
+                color = ekotaSectionTitleColor()
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -207,6 +209,7 @@ fun DepositLedgerScreen(
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 84.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(ledgerEntries) { entry ->
@@ -236,28 +239,33 @@ fun DepositLedgerScreen(
 
 @Composable
 fun LedgerEntryCard(entry: FundLedgerEntry) {
+    val isMoneyIn = entry.moneyIn > 0
+    val accent = if (isMoneyIn) VibrantCardAccents[2] else VibrantCardAccents[7]
+    val isDark = LocalIsDarkEkotaTheme.current
     Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDark) MaterialTheme.colorScheme.surface else accent.softSurface.copy(alpha = 0.72f)
+        ),
+        border = BorderStroke(1.dp, accent.gradient.first().copy(alpha = 0.35f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val isMoneyIn = entry.moneyIn > 0
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isMoneyIn) ekotaBadgeSuccessBg() else ekotaBadgeDangerBg()),
+                    .background(Brush.linearGradient(accent.gradient)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (isMoneyIn) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
                     contentDescription = null,
-                    tint = if (isMoneyIn) ekotaSuccessTextColor() else ekotaDangerTextColor(),
+                    tint = Color.White,
                     modifier = Modifier.size(20.dp)
                 )
             }

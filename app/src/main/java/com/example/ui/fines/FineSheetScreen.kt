@@ -122,7 +122,7 @@ fun FineSheetScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White,
                     actionIconContentColor = Color.White
@@ -134,7 +134,7 @@ fun FineSheetScreen(
                 onClick = { showAddFineDialog = true },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("জরিমানা যোগ (৳১০)", fontWeight = FontWeight.Bold) },
-                containerColor = EmeraldGreenPrimary,
+                containerColor = CardOrangeGradient.first(),
                 contentColor = Color.White,
                 modifier = Modifier.testTag("add_fine_fab")
             )
@@ -144,7 +144,7 @@ fun FineSheetScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
         ) {
             // Separate Fund Summary Card (Vibrant Gradient)
             Card(
@@ -166,8 +166,8 @@ fun FineSheetScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             FineSummaryMetric("মোট জরিমানা", BengaliUtils.formatTaka(totalAssessed), Color.White, Modifier.weight(1f))
-                            FineSummaryMetric("জরিমানা আদায়", BengaliUtils.formatTaka(totalCollected), Color(0xFFDCFCE7), Modifier.weight(1f))
-                            FineSummaryMetric("বাকি জরিমানা", BengaliUtils.formatTaka(totalDue), Color(0xFFFEF08A), Modifier.weight(1f))
+                            FineSummaryMetric("জরিমানা আদায়", BengaliUtils.formatTaka(totalCollected), Color.White, Modifier.weight(1f))
+                            FineSummaryMetric("বাকি জরিমানা", BengaliUtils.formatTaka(totalDue), Color.White, Modifier.weight(1f))
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         HorizontalDivider(color = Color.White.copy(alpha = 0.28f))
@@ -184,13 +184,13 @@ fun FineSheetScreen(
             // Tab Switcher
             TabRow(
                 selectedTabIndex = selectedTab,
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = HeaderSlateNavy
             ) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    selectedContentColor = HeaderSlateNavy,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     icon = { Icon(Icons.Default.TableChart, contentDescription = null) },
                     text = {
@@ -207,7 +207,7 @@ fun FineSheetScreen(
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    selectedContentColor = HeaderSlateNavy,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     icon = { Icon(Icons.Default.ReceiptLong, contentDescription = null) },
                     text = {
@@ -465,7 +465,8 @@ fun FineMatrixTable(
 
     Card(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
+            .wrapContentHeight()
             .padding(8.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -473,7 +474,7 @@ fun FineMatrixTable(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .verticalScroll(verticalScrollState)
         ) {
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -487,7 +488,7 @@ fun FineMatrixTable(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TableCell(text = "ক্রমিক", width = 64.dp, isHeader = true)
@@ -527,14 +528,14 @@ fun FineMatrixTable(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TableCell(
                             text = "মোট জরিমানা=",
                             width = 192.dp,
                             isHeader = true,
-                            textColor = GoldenAccent,
+                            textColor = Color.White,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
                         )
@@ -551,7 +552,7 @@ fun FineMatrixTable(
                     Row(
                         modifier = Modifier
                             .height(50.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         sortedDates.forEach { date ->
@@ -683,7 +684,7 @@ fun FineMatrixTable(
                                 text = BengaliUtils.toBengaliDigits(colTotal.toInt()),
                                 width = 100.dp,
                                 isHeader = true,
-                                textColor = GoldenAccent,
+                                textColor = Color.White,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -705,14 +706,14 @@ fun FineMatrixTable(
                             text = BengaliUtils.formatTaka(grandFineTotal),
                             width = 102.dp,
                             isHeader = true,
-                            textColor = GoldenAccent,
+                            textColor = Color.White,
                             fontWeight = FontWeight.Bold
                         )
                         TableCell(
                             text = BengaliUtils.formatTaka(grandDueTotal),
                             width = 102.dp,
                             isHeader = true,
-                            textColor = Color(0xFFFCA5A5),
+                            textColor = Color.White,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -729,14 +730,15 @@ private fun FineRecordCard(
     onTogglePaid: (Boolean) -> Unit
 ) {
     val isSavingsFine = fine.fineType == FineType.SAVINGS.name
+    val fineAccent = if (fine.isPaid) VibrantCardAccents[2] else VibrantCardAccents[7]
+    val isDark = LocalIsDarkEkotaTheme.current
     Card(
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(
-            1.dp,
-            if (fine.isPaid) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-            else MaterialTheme.colorScheme.error.copy(alpha = 0.4f)
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDark) MaterialTheme.colorScheme.surface else fineAccent.softSurface.copy(alpha = 0.75f)
         ),
+        border = BorderStroke(1.dp, fineAccent.gradient.first().copy(alpha = 0.42f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -747,13 +749,13 @@ private fun FineRecordCard(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (fine.isPaid) ekotaBadgeSuccessBg() else ekotaBadgeDangerBg()),
+                    .background(Brush.linearGradient(fineAccent.gradient)),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = BengaliUtils.toBengaliDigits(fine.memberSerial),
                     fontWeight = FontWeight.Bold,
-                    color = if (fine.isPaid) ekotaSuccessTextColor() else ekotaDangerTextColor()
+                    color = Color.White
                 )
             }
 

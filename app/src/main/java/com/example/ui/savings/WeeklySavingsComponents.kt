@@ -31,6 +31,8 @@ import com.example.data.model.SavingsRecord
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
+import androidx.compose.ui.graphics.Brush
+
 @Composable
 fun MemberSavingsInputCard(
     member: Member,
@@ -40,6 +42,7 @@ fun MemberSavingsInputCard(
     isAdmin: Boolean = true,
     isSubmittedThisWeek: Boolean = false,
     isPendingSync: Boolean = false,
+    cardAccentIndex: Int = 0,
     onAmountChange: (String) -> Unit
 ) {
     val parsedAmount = amountText.toDoubleOrNull() ?: 0.0
@@ -47,20 +50,32 @@ fun MemberSavingsInputCard(
     val defaultAmt = member.weeklySavingsAmount.toInt().toString()
     val doubleAmt = (member.weeklySavingsAmount * 2).toInt().toString()
     val isLocked = isSubmittedThisWeek || (!isAdmin && existingRecord != null && existingRecord.status != "REJECTED")
+    val isDark = LocalIsDarkEkotaTheme.current
+    val accent = VibrantCardAccents[cardAccentIndex % VibrantCardAccents.size]
+    val cardBgColor = when {
+        isDark -> MaterialTheme.colorScheme.surface
+        isLocked -> accent.softSurface
+        else -> accent.softSurface.copy(alpha = 0.65f)
+    }
+    val cardBorderColor = when {
+        isLocked -> accent.gradient.first().copy(alpha = 0.72f)
+        isPaid -> accent.gradient.first().copy(alpha = 0.50f)
+        else -> accent.gradient.first().copy(alpha = 0.30f)
+    }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("member_savings_card_${member.id}"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = cardBgColor
         ),
         border = BorderStroke(
-            width = 1.dp,
-            color = if (isPaid) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline
+            width = if (isLocked) 1.5.dp else 1.dp,
+            color = cardBorderColor
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
             modifier = Modifier
@@ -72,19 +87,21 @@ fun MemberSavingsInputCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Serial Number Badge
+                // Vibrant Multi-Color Serial Number Badge
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(Brush.linearGradient(colors = accent.gradient)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = BengaliUtils.toBengaliDigits(member.memberSerial),
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
@@ -96,17 +113,41 @@ fun MemberSavingsInputCard(
                         text = member.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = if (!isDark && isLocked) accent.accentInk else MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "${member.area.ifBlank { "যাদবপুর" }} • নির্ধারিত: ${BengaliUtils.formatTaka(member.weeklySavingsAmount)}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (!isDark && isLocked) TextDark.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (existingRecord != null) {
+                        val submitterName = existingRecord.officerName.ifBlank { "অ্যাডমিন" }
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.testTag("savings_submitted_by_${member.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PersonPin,
+                                contentDescription = "জমাদানকারী",
+                                tint = if (isDark) accent.gradient.last() else accent.accentInk,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "জমাদানকারী: $submitterName",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) accent.gradient.last() else accent.accentInk,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -228,7 +269,12 @@ fun MemberSavingsInputCard(
                             .testTag("savings_amount_input_${member.id}"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            focusedLabelColor = MaterialTheme.colorScheme.primary
+                            focusedLabelColor = MaterialTheme.colorScheme.primary,
+                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                            disabledBorderColor = accent.gradient.first().copy(alpha = 0.60f),
+                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            disabledPrefixColor = MaterialTheme.colorScheme.primary,
+                            disabledContainerColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White
                         )
                     )
                     Surface(
@@ -280,8 +326,10 @@ fun MemberSavingsInputCard(
                         .fillMaxWidth()
                         .testTag("savings_amount_input_${member.id}"),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        focusedLabelColor = MaterialTheme.colorScheme.primary
+                        focusedContainerColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White,
+                        unfocusedContainerColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White,
+                        focusedBorderColor = accent.gradient.first(),
+                        focusedLabelColor = accent.accentInk
                     )
                 )
 
@@ -386,7 +434,8 @@ fun WeeklySavingsMatrixTable(
 
     Card(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
+            .wrapContentHeight()
             .padding(8.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -394,7 +443,7 @@ fun WeeklySavingsMatrixTable(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
                 .verticalScroll(verticalScrollState)
         ) {
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -408,7 +457,7 @@ fun WeeklySavingsMatrixTable(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TableCell(text = "ক্রমিক", width = 64.dp, isHeader = true)
@@ -449,14 +498,14 @@ fun WeeklySavingsMatrixTable(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TableCell(
                             text = "মোট টাকা =",
                             width = 192.dp,
                             isHeader = true,
-                            textColor = GoldenAccent,
+                            textColor = Color.White,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
                         )
@@ -473,7 +522,7 @@ fun WeeklySavingsMatrixTable(
                     Row(
                         modifier = Modifier
                             .height(52.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         sortedDates.forEach { date ->
@@ -500,7 +549,7 @@ fun WeeklySavingsMatrixTable(
                                     Icon(
                                         imageVector = Icons.Default.Edit,
                                         contentDescription = "তারিখ আপডেট",
-                                        tint = GoldenAccent,
+                                        tint = Color.White.copy(alpha = 0.9f),
                                         modifier = Modifier.size(13.dp)
                                     )
                                 }
@@ -578,7 +627,7 @@ fun WeeklySavingsMatrixTable(
                     Row(
                         modifier = Modifier
                             .height(52.dp)
-                            .background(NavyBlueSecondary),
+                            .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         sortedDates.forEach { date ->
@@ -587,7 +636,7 @@ fun WeeklySavingsMatrixTable(
                                 text = BengaliUtils.toBengaliDigits(colTotal.toInt()),
                                 width = 96.dp,
                                 isHeader = true,
-                                textColor = GoldenAccent,
+                                textColor = Color.White,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -595,7 +644,7 @@ fun WeeklySavingsMatrixTable(
                             text = BengaliUtils.formatTaka(grandTotal),
                             width = 108.dp,
                             isHeader = true,
-                            textColor = GoldenAccent,
+                            textColor = Color.White,
                             fontWeight = FontWeight.Bold
                         )
                     }

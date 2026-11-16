@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -80,7 +81,7 @@ fun ReportsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White,
                     actionIconContentColor = Color.White
@@ -92,7 +93,7 @@ fun ReportsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
                 .padding(16.dp)
         ) {
             // Report Selector
@@ -107,6 +108,12 @@ fun ReportsScreen(
                     readOnly = true,
                     label = { Text("রিপোর্ট নির্বাচন করুন") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedBorderColor = HeaderSlateNavy,
+                        focusedLabelColor = HeaderSlateNavy
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .menuAnchor(type = MenuAnchorType.PrimaryNotEditable)
@@ -129,34 +136,35 @@ fun ReportsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Report Header Card
+            // Report Header Card (Vibrant Blue Gradient matching dashboard)
             Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(Brush.linearGradient(CardBlueGradient))
                         .padding(16.dp)
                 ) {
                     Text(
                         text = "সংগঠন: ${settings.orgName}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = Color.White
                     )
                     Text(
                         text = "প্রতিবেদন: ${reportTitles[selectedReportIndex]}",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = Color.White.copy(alpha = 0.95f)
                     )
                     Text(
                         text = "তারিখ: ${BengaliUtils.getCurrentDateStr()} | সময়কাল: ${settings.currentMonthHeading}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color.White.copy(alpha = 0.88f)
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -169,8 +177,10 @@ fun ReportsScreen(
                                 shareReportSummary(context, settings.orgName, "${reportTitles[selectedReportIndex]} (PDF)")
                             },
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSurface
+                                containerColor = Color.White.copy(alpha = 0.16f),
+                                contentColor = Color.White
                             ),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
@@ -185,8 +195,10 @@ fun ReportsScreen(
                                 shareReportSummary(context, settings.orgName, "${reportTitles[selectedReportIndex]} (Excel)")
                             },
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSurface
+                                containerColor = Color.White.copy(alpha = 0.16f),
+                                contentColor = Color.White
                             ),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
@@ -201,8 +213,10 @@ fun ReportsScreen(
                                 shareReportSummary(context, settings.orgName, "${reportTitles[selectedReportIndex]} (Image)")
                             },
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSurface
+                                containerColor = Color.White.copy(alpha = 0.16f),
+                                contentColor = Color.White
                             ),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)

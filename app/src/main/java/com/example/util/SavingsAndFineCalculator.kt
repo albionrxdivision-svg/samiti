@@ -55,6 +55,23 @@ object SavingsAndFineCalculator {
             .sortedWith(compareBy<String>({ parseDateMillis(it) ?: Long.MAX_VALUE }, { it }))
     }
 
+    fun weekStartKey(dateStr: String): Long? {
+        val trimmed = dateStr.trim()
+        if (trimmed.isEmpty()) return null
+        val millis = parseDateMillis(trimmed) ?: return null
+        val cal = Calendar.getInstance(Locale.US).apply {
+            timeInMillis = millis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+            val dayOfWeek = get(Calendar.DAY_OF_WEEK)
+            val daysSinceSaturday = (dayOfWeek - Calendar.SATURDAY + 7) % 7
+            add(Calendar.DAY_OF_YEAR, -daysSinceSaturday)
+        }
+        return cal.get(Calendar.YEAR) * 1000L + cal.get(Calendar.DAY_OF_YEAR)
+    }
+
     /**
      * Checks whether two dd/MM/yy date strings fall within the same cooperative week
      * (Saturday through Friday). Used to prevent double submission within the same week.
@@ -65,24 +82,9 @@ object SavingsAndFineCalculator {
         if (d1.isEmpty() || d2.isEmpty()) return false
         if (d1 == d2) return true
 
-        val millis1 = parseDateMillis(d1) ?: return false
-        val millis2 = parseDateMillis(d2) ?: return false
-
-        fun weekStartKey(timeMillis: Long): Long {
-            val cal = Calendar.getInstance(Locale.US).apply {
-                timeInMillis = timeMillis
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-                val dayOfWeek = get(Calendar.DAY_OF_WEEK)
-                val daysSinceSaturday = (dayOfWeek - Calendar.SATURDAY + 7) % 7
-                add(Calendar.DAY_OF_YEAR, -daysSinceSaturday)
-            }
-            return cal.get(Calendar.YEAR) * 1000L + cal.get(Calendar.DAY_OF_YEAR)
-        }
-
-        return weekStartKey(millis1) == weekStartKey(millis2)
+        val k1 = weekStartKey(d1) ?: return false
+        val k2 = weekStartKey(d2) ?: return false
+        return k1 == k2
     }
 
     /**

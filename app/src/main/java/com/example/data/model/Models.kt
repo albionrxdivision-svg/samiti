@@ -116,6 +116,7 @@ data class LoanInstallment(
     val amount: Double = 0.0,
     val isMissed: Boolean = false,
     val officerId: String = "",
+    val officerName: String = "",
     val status: String = TransactionStatus.APPROVED.name,
     val createdBy: String = "",
     val approvedBy: String = "",

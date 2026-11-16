@@ -32,9 +32,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
-import com.example.ui.theme.EmeraldGreenDark
-import com.example.ui.theme.EmeraldGreenLight
-import com.example.ui.theme.EmeraldGreenPrimary
+import com.example.ui.theme.*
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
@@ -57,15 +55,7 @@ fun AuthScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        EmeraldGreenPrimary,
-                        EmeraldGreenDark,
-                        Color(0xFF072418)
-                    )
-                )
-            ),
+            .background(ekotaSilverBackgroundBrush()),
         contentAlignment = Alignment.Center
     ) {
         Card(
@@ -75,7 +65,8 @@ fun AuthScreen(
                 .padding(vertical = 20.dp, horizontal = 8.dp),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -107,7 +98,7 @@ fun AuthScreen(
                     text = "যাদবপুর যুব সমাজ সমিতি",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = HeaderSlateNavy,
                     textAlign = TextAlign.Center
                 )
 
@@ -122,12 +113,9 @@ fun AuthScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 val passwordManager = remember { com.example.util.PasswordManager.forContext(context) }
-                val adminUsesDefault = remember { !passwordManager.isAdminPasswordCustomized() }
-                val defaultOfficerName = "মাঠ কর্মকর্তা ১"
-                val defaultOfficerHasCustom = remember { passwordManager.hasCustomOfficerPassword(defaultOfficerName) }
 
-                var username by remember { mutableStateOf("Nitai") }
-                var password by remember { mutableStateOf(if (adminUsesDefault) "Nemai" else "") }
+                var username by remember { mutableStateOf("") }
+                var password by remember { mutableStateOf("") }
                 var passwordVisible by remember { mutableStateOf(false) }
                 var selectedTabIndex by remember { mutableStateOf(0) } // 0: Admin, 1: Field Officer
 
@@ -142,8 +130,8 @@ fun AuthScreen(
                         selected = selectedTabIndex == 0,
                         onClick = {
                             selectedTabIndex = 0
-                            username = "Nitai"
-                            password = if (!passwordManager.isAdminPasswordCustomized()) "Nemai" else ""
+                            username = ""
+                            password = ""
                             errorMessage = null
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
@@ -159,14 +147,8 @@ fun AuthScreen(
                         selected = selectedTabIndex == 1,
                         onClick = {
                             selectedTabIndex = 1
-                            username = defaultOfficerName
-                            val hasCustom = passwordManager.hasCustomOfficerPassword(defaultOfficerName)
-                            val defaultOffPw = passwordManager.getDefaultOfficerPassword()
-                            password = if (!hasCustom && defaultOffPw == com.example.util.PasswordManager.DEFAULT_OFFICER_PASSWORD) {
-                                defaultOffPw
-                            } else {
-                                ""
-                            }
+                            username = ""
+                            password = ""
                             errorMessage = null
                         },
                         selectedContentColor = MaterialTheme.colorScheme.primary,
@@ -182,43 +164,35 @@ fun AuthScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Role Information & Quick Preset Badge
+                // Role Information Badge (never displays usernames or passwords)
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = "নিরাপত্তা",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            val infoText = if (selectedTabIndex == 0) {
-                                if (adminUsesDefault) {
-                                    "অ্যাডমিন লগইন: Nitai | পাসওয়ার্ড: Nemai"
-                                } else {
-                                    "অ্যাডমিন আইডি: Nitai (আপনার পরিবর্তিত পাসওয়ার্ড দিন)"
-                                }
-                            } else {
-                                val currentOfficerCustom = passwordManager.hasCustomOfficerPassword(username)
-                                val defaultOffPw = passwordManager.getDefaultOfficerPassword()
-                                if (!currentOfficerCustom && !defaultOfficerHasCustom && defaultOffPw == com.example.util.PasswordManager.DEFAULT_OFFICER_PASSWORD) {
-                                    "মাঠ কর্মকর্তা ডিফল্ট পাসওয়ার্ড: 123 (সেটিংস থেকে পরিবর্তনযোগ্য)"
-                                } else {
-                                    "মাঠ কর্মকর্তা আইডি ও আপনার নির্ধারিত পাসওয়ার্ড দিন"
-                                }
-                            }
-                            Text(
-                                text = infoText,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = "নিরাপত্তা",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        val infoText = if (selectedTabIndex == 0) {
+                            "অ্যাডমিন আইডি ও পাসওয়ার্ড দিয়ে প্রবেশ করুন"
+                        } else {
+                            "মাঠ কর্মকর্তা আইডি ও পাসওয়ার্ড দিয়ে প্রবেশ করুন"
                         }
+                        Text(
+                            text = infoText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
                     }
                 }
 
@@ -312,21 +286,15 @@ fun AuthScreen(
                                 com.example.data.model.AuthSession.setAdminSession(context)
                                 onAuthSuccess()
                             } else {
-                                errorMessage = if (!passwordManager.isAdminPasswordCustomized()) {
-                                    "ভুল তথ্য! অ্যাডমিন লগইন: Nitai এবং পাসওয়ার্ড: Nemai"
-                                } else {
-                                    "ভুল অ্যাডমিন আইডি বা পাসওয়ার্ড!"
-                                }
+                                errorMessage = "ভুল অ্যাডমিন আইডি বা পাসওয়ার্ড!"
                             }
                         } else {
                             // Field Officer verification via PasswordManager
-                            if (u.equals("Nitai", ignoreCase = true)) {
-                                errorMessage = "এটি অ্যাডমিনের আইডি। অ্যাডমিন ট্যাব ব্যবহার করুন অথবা মাঠ কর্মকর্তার নাম দিন"
-                            } else if (passwordManager.verifyOfficerLogin(u, p)) {
+                            if (passwordManager.verifyOfficerLogin(u, p)) {
                                 com.example.data.model.AuthSession.setOfficerSession(u, context)
                                 onAuthSuccess()
                             } else {
-                                errorMessage = "ভুল পাসওয়ার্ড! আপনার সঠিক পাসওয়ার্ড দিন"
+                                errorMessage = "ভুল মাঠ কর্মকর্তা আইডি বা পাসওয়ার্ড!"
                             }
                         }
                     },
@@ -346,45 +314,6 @@ fun AuthScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    HorizontalDivider(modifier = Modifier.weight(1f))
-                    Text(
-                        text = "  ক্লাউড ও অফলাইন সিঙ্ক  ",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    HorizontalDivider(modifier = Modifier.weight(1f))
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                GoogleSignInButton(
-                    label = if (selectedTabIndex == 0) {
-                        "Google দিয়ে অ্যাডমিন সিঙ্ক করুন"
-                    } else {
-                        "Google দিয়ে মাঠ কর্মকর্তা সিঙ্ক করুন"
-                    },
-                    onAuthSuccess = {
-                        errorMessage = null
-                        onAuthSuccess()
-                    },
-                    onAuthError = { msg -> errorMessage = msg }
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "Google লগইন করলে Firestore অফলাইন ক্যাশ চালু থাকবে — নেট ছাড়াও এন্ট্রি করা যাবে এবং নেট এলে অটো সিঙ্ক হবে।",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
             }
         }
     }
@@ -422,9 +351,9 @@ fun GoogleSignInButton(
         },
         enabled = !isLoading,
         shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, EmeraldGreenPrimary.copy(alpha = 0.6f)),
+        border = BorderStroke(1.dp, NavyBlueSecondary.copy(alpha = 0.55f)),
         colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = EmeraldGreenPrimary
+            contentColor = NavyBlueSecondary
         ),
         modifier = modifier
             .fillMaxWidth()

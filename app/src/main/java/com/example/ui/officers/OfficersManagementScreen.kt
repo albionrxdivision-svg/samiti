@@ -1,18 +1,21 @@
 package com.example.ui.officers
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,11 +47,11 @@ fun OfficersManagementScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "ফিরে যান")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 )
@@ -59,7 +62,7 @@ fun OfficersManagementScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
                 .padding(16.dp)
         ) {
             Surface(
@@ -81,33 +84,34 @@ fun OfficersManagementScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(allUsers) { user ->
+                itemsIndexed(allUsers) { index, user ->
+                    val isAdmin = user.role == UserRole.ADMIN.name
+                    val accent = if (isAdmin) VibrantCardAccents[0] else VibrantCardAccents[(index + 1) % VibrantCardAccents.size]
+                    val isDark = LocalIsDarkEkotaTheme.current
                     Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isDark) MaterialTheme.colorScheme.surface else accent.softSurface.copy(alpha = 0.85f)
+                        ),
+                        border = BorderStroke(1.dp, accent.gradient.first().copy(alpha = 0.4f)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
                             modifier = Modifier.padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val isAdmin = user.role == UserRole.ADMIN.name
                             Box(
                                 modifier = Modifier
-                                    .size(42.dp)
+                                    .size(44.dp)
                                     .clip(CircleShape)
-                                    .background(
-                                        if (isAdmin) MaterialTheme.colorScheme.tertiaryContainer
-                                        else MaterialTheme.colorScheme.primaryContainer
-                                    ),
+                                    .background(Brush.linearGradient(accent.gradient)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = if (isAdmin) Icons.Default.AdminPanelSettings else Icons.Default.Badge,
                                     contentDescription = null,
-                                    tint = if (isAdmin) MaterialTheme.colorScheme.onTertiaryContainer
-                                    else MaterialTheme.colorScheme.onPrimaryContainer
+                                    tint = Color.White
                                 )
                             }
 
@@ -118,7 +122,7 @@ fun OfficersManagementScreen(
                                     text = user.displayName.ifBlank { "ব্যবহারকারী" },
                                     fontWeight = FontWeight.Bold,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = if (isDark) MaterialTheme.colorScheme.onSurface else accent.accentInk
                                 )
                                 Text(
                                     text = user.email,
@@ -128,13 +132,17 @@ fun OfficersManagementScreen(
                                 Text(
                                     text = "এলাকা: ${user.assignedArea} | পদবী: ${if (isAdmin) "অ্যাডমিন" else "মাঠ কর্মকর্তা"}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = if (isDark) accent.gradient.last() else accent.accentInk,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
 
                             IconButton(onClick = { userToEdit = user }) {
-                                Icon(Icons.Default.Edit, contentDescription = "সম্পাদনা", tint = MaterialTheme.colorScheme.primary)
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = "সম্পাদনা",
+                                    tint = if (isDark) accent.gradient.last() else accent.accentInk
+                                )
                             }
                         }
                     }

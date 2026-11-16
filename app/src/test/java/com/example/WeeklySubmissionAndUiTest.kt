@@ -1,22 +1,35 @@
 package com.example
 
 import android.content.Context
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.LocalDataStore
 import com.example.data.model.AuthSession
 import com.example.data.model.Loan
 import com.example.data.model.Member
+import com.example.data.model.SavingsRecord
+import com.example.data.model.TransactionStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.UserRole
 import com.example.data.repository.EkotaRepository
 import com.example.ui.MainViewModel
 import com.example.ui.components.SuccessPopupDialog
+import com.example.ui.loans.LoanCard
+import com.example.ui.savings.MemberSavingsInputCard
+import com.example.ui.savings.SingleMemberSavingsDepositForm
+import com.example.data.local.StorageQuotaManager
+import com.example.ui.auth.AuthScreen
+import com.example.ui.settings.SettingsScreen
+import com.example.ui.settings.StorageSettingsDialog
 import com.example.ui.theme.EkotaSamitiTheme
 import com.example.ui.theme.SilverBackgroundLight
 import com.example.util.SavingsAndFineCalculator
@@ -243,5 +256,182 @@ class WeeklySubmissionAndUiTest {
         composeTestRule.onNodeWithText("সফল হয়েছে (Successful)").assertIsDisplayed()
         composeTestRule.onNodeWithTag("submission_success_ok_button").performClick()
         assertTrue(dismissed)
+    }
+
+    @Test
+    fun savingsCardDisplaysCollectorNameAndLoanCardHidesSubmitButtonAfterSubmission() {
+        val m1 = Member(id = "m1", memberSerial = "1", name = "রহিম", weeklySavingsAmount = 100.0)
+        val record = SavingsRecord(
+            id = "m1_14-11-26",
+            memberId = "m1",
+            memberName = "রহিম",
+            memberSerial = "1",
+            collectionDate = "14/11/26",
+            amount = 100.0,
+            isPaid = true,
+            officerId = "officer_karim",
+            officerName = "করিম",
+            status = TransactionStatus.APPROVED.name
+        )
+        val loan = Loan(
+            id = "loan1",
+            memberId = "m1",
+            memberName = "রহিম",
+            memberSerial = "1",
+            principal = 3000.0,
+            interest = 600.0,
+            totalPayable = 3600.0,
+            weeklyInstallment = 300.0,
+            totalPaid = 300.0,
+            remainingLoan = 3300.0,
+            loanDate = "14/11/26"
+        )
+
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                androidx.compose.foundation.layout.Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    MemberSavingsInputCard(
+                        member = m1,
+                        amountText = "100",
+                        existingRecord = record,
+                        isSubmittedThisWeek = true,
+                        onAmountChange = {}
+                    )
+                    LoanCard(
+                        loan = loan,
+                        installmentsCount = 1,
+                        isAdmin = true,
+                        isSubmittedThisWeek = true,
+                        latestCollectorName = "করিম",
+                        onCardClick = {},
+                        onCollectInstallment = {}
+                    )
+                }
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("savings_submitted_by_m1", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("loan_installment_submitted_pill_loan1", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("collect_installment_btn_loan1", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun adminSettingsScreenShowsAiAutoCallOption() {
+        val viewModel = MainViewModel(EkotaRepository(context), "admin_nitai")
+
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                SettingsScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = {},
+                    onSignOut = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_ai_auto_call_item").assertIsDisplayed()
+    }
+
+    @Test
+    fun singleMemberSavingsDepositFormSubmitsToCallbackAndLocksSameWeek() {
+        val m1 = Member(id = "m1", memberSerial = "1", name = "রহিম", area = "উত্তর", weeklySavingsAmount = 100.0)
+        var submittedAmount = 0.0
+        var submittedDate = ""
+        val recordsState = androidx.compose.runtime.mutableStateOf(emptyList<SavingsRecord>())
+
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                SingleMemberSavingsDepositForm(
+                    members = listOf(m1),
+                    selectedDate = "15/11/26",
+                    savingsRecords = recordsState.value,
+                    isCloudAuthenticated = true,
+                    isOnline = true,
+                    isAdmin = true,
+                    collectorName = "নিতাই",
+                    onDateChange = {},
+                    onSubmitDeposit = { member, colDate, amount ->
+                        submittedDate = colDate
+                        submittedAmount = amount
+                        recordsState.value = listOf(
+                            SavingsRecord(
+                                id = "${member.id}_${colDate.replace("/", "-")}",
+                                memberId = member.id,
+                                memberName = member.name,
+                                collectionDate = colDate,
+                                amount = amount,
+                                isPaid = amount > 0.0,
+                                officerName = "নিতাই",
+                                status = TransactionStatus.APPROVED.name
+                            )
+                        )
+                    }
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("single_deposit_firestore_banner").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("submit_single_savings_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals("15/11/26", submittedDate)
+        assertEquals(100.0, submittedAmount, 0.01)
+        composeTestRule.onNodeWithTag("single_deposit_completed_badge").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("submit_single_savings_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun storageSettingsDialogAllowsSelecting100GbAndSavingBackup() {
+        StorageQuotaManager.setConfiguredLimitBytes(context, StorageQuotaManager.STORAGE_100_MB)
+        var updatedLimit = 0L
+
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                StorageSettingsDialog(
+                    canEditQuota = true,
+                    backupJsonProvider = { """{"membersCount":1,"savingsRecordsCount":1}""" },
+                    onLimitUpdated = { updatedLimit = it },
+                    onDismiss = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("storage_settings_dialog").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("storage_option_100gb").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(StorageQuotaManager.STORAGE_100_GB, updatedLimit)
+        assertEquals(StorageQuotaManager.STORAGE_100_GB, StorageQuotaManager.getConfiguredLimitBytes(context))
+
+        composeTestRule.onNodeWithTag("save_local_backup_archive_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        val archives = StorageQuotaManager.listBackupArchives(context)
+        assertTrue(archives.isNotEmpty())
+        archives.forEach { StorageQuotaManager.deleteBackupArchive(context, it.fileName) }
+    }
+
+    @Test
+    fun authScreenDoesNotExposeAdminCredentialsOrGoogleSyncSection() {
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                AuthScreen(onAuthSuccess = {})
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("username_input").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("password_input").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("login_button").performScrollTo().assertIsDisplayed()
+
+        // Admin credentials (Nitai/Nemai) and Cloud Sync section must NOT be shown on Login screen
+        composeTestRule.onNodeWithText("Nitai", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Nemai", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithTag("google_sign_in_button").assertDoesNotExist()
     }
 }

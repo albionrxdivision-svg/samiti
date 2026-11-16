@@ -2,10 +2,18 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.local.CachedLoanEntity
+import com.example.data.local.CachedMemberEntity
 import com.example.data.local.LocalDataStore
+import com.example.data.local.OfflineSyncStatus
+import com.example.data.local.OfflineTransactionDao
+import com.example.data.local.OfflineTransactionDatabase
+import com.example.data.local.OfflineTransactionType
+import com.example.data.local.PendingOfflineTransactionEntity
 import com.example.data.model.*
 import com.example.util.BengaliUtils
 import com.example.util.OperationType
+import com.example.util.SavingsAndFineCalculator
 import com.example.util.handleFirestoreError
 import com.google.android.gms.tasks.Task
 import com.google.firebase.Firebase
@@ -30,6 +38,8 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -53,14 +63,18 @@ data class SyncStatusState(
 class EkotaRepository(
     private val db: FirebaseFirestore,
     private val localStore: LocalDataStore? = null,
-    private val appContext: Context? = null
+    private val appContext: Context? = null,
+    private val offlineDao: OfflineTransactionDao? = null
 ) {
 
     constructor(context: Context) : this(
         db = FirestoreClientProvider.getInstance(context),
         localStore = LocalDataStore(context.applicationContext),
-        appContext = context.applicationContext
+        appContext = context.applicationContext,
+        offlineDao = OfflineTransactionDatabase.getInstance(context.applicationContext).offlineTransactionDao()
     )
+
+    private val syncMutex = Mutex()
 
     private val auth = Firebase.auth
 
@@ -218,6 +232,322 @@ class EkotaRepository(
     fun loadLocalAdminNotifications(): List<AdminNotification> = localStore?.loadAdminNotifications() ?: emptyList()
     fun saveLocalAdminNotifications(list: List<AdminNotification>) { localStore?.saveAdminNotifications(list) }
     fun clearAllLocalData() { localStore?.clearAllData() }
+
+    // -------------------------------------------------------------
+    // ROOM OFFLINE CACHE & SYNC QUEUE (DATA INTEGRITY + DEDUP)
+    // -------------------------------------------------------------
+    fun observePendingRoomTransactions(): Flow<List<PendingOfflineTransactionEntity>> =
+        offlineDao?.observeUnsyncedTransactions() ?: flowOf(emptyList())
+
+    suspend fun cacheMembersInRoom(members: List<Member>) {
+        offlineDao?.replaceCachedMembers(members.map { CachedMemberEntity.fromModel(it) })
+    }
+
+    suspend fun loadCachedMembersFromRoom(): List<Member> =
+        offlineDao?.getCachedMembers()?.map { it.toModel() } ?: emptyList()
+
+    suspend fun cacheLoansInRoom(loans: List<Loan>) {
+        offlineDao?.replaceCachedLoans(loans.map { CachedLoanEntity.fromModel(it) })
+    }
+
+    suspend fun loadCachedLoansFromRoom(): List<Loan> =
+        offlineDao?.getCachedLoans()?.map { it.toModel() } ?: emptyList()
+
+    suspend fun enqueueOfflineSavingsRecord(record: SavingsRecord, isOfficer: Boolean): Boolean {
+        val dao = offlineDao ?: return true
+        val wk = SavingsAndFineCalculator.weekStartKey(record.collectionDate) ?: 0L
+        if (wk > 0L) {
+            val existingInRoom = dao.findByMemberAndWeek(OfflineTransactionType.SAVINGS, record.memberId, wk)
+            if (existingInRoom != null) {
+                return false
+            }
+        }
+        val docId = record.id.ifBlank { "${record.memberId}_${record.collectionDate.replace("/", "-")}" }
+        dao.upsertTransaction(
+            PendingOfflineTransactionEntity(
+                id = docId,
+                transactionType = OfflineTransactionType.SAVINGS,
+                memberId = record.memberId,
+                memberName = record.memberName,
+                memberSerial = record.memberSerial,
+                loanId = "",
+                collectionDate = record.collectionDate,
+                weekKey = wk,
+                amount = record.amount,
+                officerId = record.officerId.ifBlank { requireUserId() },
+                officerName = record.officerName,
+                isOfficerSubmission = isOfficer,
+                syncStatus = OfflineSyncStatus.PENDING
+            )
+        )
+        return true
+    }
+
+    suspend fun enqueueOfflineSavingsBatch(records: List<SavingsRecord>, isOfficer: Boolean): List<SavingsRecord> {
+        val dao = offlineDao ?: return records
+        val accepted = mutableListOf<SavingsRecord>()
+        val entities = mutableListOf<PendingOfflineTransactionEntity>()
+        for (rec in records) {
+            val wk = SavingsAndFineCalculator.weekStartKey(rec.collectionDate) ?: 0L
+            val dupInRoom = if (wk > 0L) {
+                dao.findByMemberAndWeek(OfflineTransactionType.SAVINGS, rec.memberId, wk) != null
+            } else false
+            if (!dupInRoom) {
+                val docId = rec.id.ifBlank { "${rec.memberId}_${rec.collectionDate.replace("/", "-")}" }
+                accepted.add(rec.copy(id = docId))
+                entities.add(
+                    PendingOfflineTransactionEntity(
+                        id = docId,
+                        transactionType = OfflineTransactionType.SAVINGS,
+                        memberId = rec.memberId,
+                        memberName = rec.memberName,
+                        memberSerial = rec.memberSerial,
+                        loanId = "",
+                        collectionDate = rec.collectionDate,
+                        weekKey = wk,
+                        amount = rec.amount,
+                        officerId = rec.officerId.ifBlank { requireUserId() },
+                        officerName = rec.officerName,
+                        isOfficerSubmission = isOfficer,
+                        syncStatus = OfflineSyncStatus.PENDING
+                    )
+                )
+            }
+        }
+        if (entities.isNotEmpty()) {
+            dao.upsertTransactions(entities)
+        }
+        return accepted
+    }
+
+    suspend fun enqueueOfflineLoanInstallment(installment: LoanInstallment, isOfficer: Boolean): Boolean {
+        val dao = offlineDao ?: return true
+        val wk = SavingsAndFineCalculator.weekStartKey(installment.installmentDate) ?: 0L
+        if (wk > 0L) {
+            val dupInRoom = dao.findInstallmentByLoanAndWeek(installment.loanId, wk)
+            if (dupInRoom != null) {
+                return false
+            }
+        }
+        val docId = installment.id.ifBlank { "inst_${installment.loanId}_${installment.installmentDate.replace("/", "-")}" }
+        dao.upsertTransaction(
+            PendingOfflineTransactionEntity(
+                id = docId,
+                transactionType = OfflineTransactionType.LOAN_INSTALLMENT,
+                memberId = installment.memberId,
+                memberName = installment.memberName,
+                memberSerial = installment.serialNumber,
+                loanId = installment.loanId,
+                collectionDate = installment.installmentDate,
+                weekKey = wk,
+                amount = installment.amount,
+                officerId = installment.officerId.ifBlank { requireUserId() },
+                officerName = installment.officerName,
+                isOfficerSubmission = isOfficer,
+                syncStatus = OfflineSyncStatus.PENDING
+            )
+        )
+        return true
+    }
+
+    suspend fun markRoomTransactionSynced(id: String) {
+        offlineDao?.updateSyncStatus(
+            id = id,
+            status = OfflineSyncStatus.SYNCED,
+            retryCount = 0,
+            error = "",
+            syncedAtMillis = System.currentTimeMillis()
+        )
+    }
+
+    suspend fun clearAllRoomData() {
+        offlineDao?.clearAllPending()
+        offlineDao?.clearCachedMembers()
+        offlineDao?.clearCachedLoans()
+    }
+
+    /**
+     * Synchronizes all pending Room-cached offline transactions to Cloud Firestore idempotently
+     * using deterministic document IDs and duplicate week checks for Admin approval.
+     */
+    suspend fun syncPendingOfflineTransactions(): Int {
+        val dao = offlineDao ?: return 0
+        if (auth.currentUser == null || !isOnline()) return 0
+
+        return syncMutex.withLock {
+            val unsynced = dao.getUnsyncedTransactions()
+            if (unsynced.isEmpty()) return@withLock 0
+
+            db.enableNetwork()
+            var syncedCount = 0
+
+            for (tx in unsynced) {
+                try {
+                    dao.updateSyncStatus(tx.id, OfflineSyncStatus.SYNCING, tx.retryCount, "", 0L)
+                    when (tx.transactionType) {
+                        OfflineTransactionType.SAVINGS -> {
+                            val docId = "${tx.memberId}_${tx.collectionDate.replace("/", "-")}"
+                            val docRef = db.collection("savings").document(docId)
+                            val existingSnap = withTimeoutOrNull(4000L) {
+                                docRef.get(Source.SERVER).await()
+                            }
+                            if (existingSnap == null || !existingSnap.exists() ||
+                                existingSnap.getString("status") == TransactionStatus.REJECTED.name
+                            ) {
+                                val targetStatus = if (tx.isOfficerSubmission) {
+                                    TransactionStatus.PENDING.name
+                                } else {
+                                    TransactionStatus.APPROVED.name
+                                }
+                                val payload = mapOf(
+                                    "memberId" to tx.memberId,
+                                    "memberName" to tx.memberName,
+                                    "memberSerial" to tx.memberSerial,
+                                    "collectionDate" to tx.collectionDate,
+                                    "amount" to tx.amount,
+                                    "isPaid" to (tx.amount > 0.0),
+                                    "officerId" to tx.officerId,
+                                    "officerName" to tx.officerName,
+                                    "status" to targetStatus,
+                                    "createdBy" to tx.officerId,
+                                    "approvedBy" to if (targetStatus == TransactionStatus.APPROVED.name) tx.officerId else "",
+                                    "createdAt" to FieldValue.serverTimestamp(),
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                                docRef.set(payload, SetOptions.merge()).await()
+                                if (tx.isOfficerSubmission) {
+                                    sendIdempotentAdminApprovalNotification(
+                                        notifId = "notif_$docId",
+                                        title = "নতুন সঞ্চয় অনুমোদনের অনুরোধ",
+                                        body = "${tx.officerName} সদস্য ${tx.memberName}-এর ${tx.collectionDate} তারিখের ৳${tx.amount.toInt()} সঞ্চয় অফলাইন সিঙ্ক করেছেন।",
+                                        transactionType = "SAVINGS",
+                                        transactionId = docId,
+                                        memberName = tx.memberName,
+                                        amount = tx.amount,
+                                        officerId = tx.officerId,
+                                        officerName = tx.officerName
+                                    )
+                                }
+                            }
+                        }
+
+                        OfflineTransactionType.LOAN_INSTALLMENT -> {
+                            val docId = "inst_${tx.loanId}_${tx.collectionDate.replace("/", "-")}"
+                            val docRef = db.collection("loanInstallments").document(docId)
+                            val existingSnap = withTimeoutOrNull(4000L) {
+                                docRef.get(Source.SERVER).await()
+                            }
+                            if (existingSnap == null || !existingSnap.exists() ||
+                                existingSnap.getString("status") == TransactionStatus.REJECTED.name
+                            ) {
+                                val targetStatus = if (tx.isOfficerSubmission) {
+                                    TransactionStatus.PENDING.name
+                                } else {
+                                    TransactionStatus.APPROVED.name
+                                }
+                                val countSnap = withTimeoutOrNull(3000L) {
+                                    db.collection("loanInstallments").whereEqualTo("loanId", tx.loanId).get().await()
+                                }
+                                val serialBengali = BengaliUtils.toBengaliDigits((countSnap?.size() ?: 0) + 1)
+                                val payload = mapOf(
+                                    "loanId" to tx.loanId,
+                                    "memberId" to tx.memberId,
+                                    "memberName" to tx.memberName,
+                                    "serialNumber" to serialBengali,
+                                    "installmentDate" to tx.collectionDate,
+                                    "amount" to tx.amount,
+                                    "isMissed" to false,
+                                    "officerId" to tx.officerId,
+                                    "officerName" to tx.officerName,
+                                    "status" to targetStatus,
+                                    "createdBy" to tx.officerId,
+                                    "approvedBy" to if (targetStatus == TransactionStatus.APPROVED.name) tx.officerId else "",
+                                    "createdAt" to FieldValue.serverTimestamp()
+                                )
+                                docRef.set(payload, SetOptions.merge()).await()
+                                if (targetStatus == TransactionStatus.APPROVED.name) {
+                                    applyApprovedInstallmentToLoan(
+                                        tx.loanId,
+                                        tx.amount,
+                                        BengaliUtils.addDaysToDateStr(tx.collectionDate, 7)
+                                    )
+                                } else {
+                                    sendIdempotentAdminApprovalNotification(
+                                        notifId = "notif_$docId",
+                                        title = "নতুন ঋণের কিস্তি অনুমোদনের অনুরোধ",
+                                        body = "${tx.officerName} ${tx.memberName}-এর ${tx.collectionDate} তারিখের ৳${tx.amount.toInt()} কিস্তি অফলাইন সিঙ্ক করেছেন।",
+                                        transactionType = "LOAN_INSTALLMENT",
+                                        transactionId = docId,
+                                        memberName = tx.memberName,
+                                        amount = tx.amount,
+                                        officerId = tx.officerId,
+                                        officerName = tx.officerName
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    dao.updateSyncStatus(
+                        id = tx.id,
+                        status = OfflineSyncStatus.SYNCED,
+                        retryCount = tx.retryCount,
+                        error = "",
+                        syncedAtMillis = System.currentTimeMillis()
+                    )
+                    syncedCount++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    dao.updateSyncStatus(
+                        id = tx.id,
+                        status = OfflineSyncStatus.FAILED,
+                        retryCount = tx.retryCount + 1,
+                        error = e.localizedMessage ?: "Sync error",
+                        syncedAtMillis = 0L
+                    )
+                }
+            }
+            syncedCount
+        }
+    }
+
+    private suspend fun sendIdempotentAdminApprovalNotification(
+        notifId: String,
+        title: String,
+        body: String,
+        transactionType: String,
+        transactionId: String,
+        memberName: String,
+        amount: Double,
+        officerId: String,
+        officerName: String
+    ) {
+        val tokens = try {
+            getQueryOfflineSafe(db.collection("adminFcmTokens"), "adminFcmTokens").documents
+                .mapNotNull { it.getString("token")?.takeIf { t -> t.isNotBlank() } }
+                .distinct()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val payload = mapOf(
+            "title" to title,
+            "body" to body,
+            "transactionType" to transactionType,
+            "transactionId" to transactionId,
+            "memberName" to memberName,
+            "amount" to amount,
+            "officerId" to officerId,
+            "officerName" to officerName,
+            "targetRole" to UserRole.ADMIN.name,
+            "targetTopic" to "admin_approvals",
+            "targetScreen" to "APPROVALS",
+            "deepLink" to "ekotasamiti://approvals",
+            "recipientTokens" to tokens,
+            "isRead" to false,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        db.collection("adminNotifications").document(notifId).set(payload, SetOptions.merge()).await()
+    }
 
     // -------------------------------------------------------------
     // USER PROFILE & ROLE
@@ -770,11 +1100,14 @@ class EkotaRepository(
         loan: Loan,
         date: String,
         amount: Double,
-        isOfficer: Boolean
+        isOfficer: Boolean,
+        officerName: String = ""
     ) {
         val uid = requireUserId()
         val path = "loanInstallments"
-        val docRef = db.collection(path).document()
+        // Deterministic document ID prevents duplicate installment entries across offline retries & syncs
+        val deterministicId = "inst_${loan.id}_${date.replace("/", "-")}"
+        val docRef = db.collection(path).document(deterministicId)
         val status = if (isOfficer) TransactionStatus.PENDING.name else TransactionStatus.APPROVED.name
 
         val countSnap = try {
@@ -793,13 +1126,14 @@ class EkotaRepository(
             "amount" to amount,
             "isMissed" to false,
             "officerId" to uid,
+            "officerName" to officerName,
             "status" to status,
             "createdBy" to uid,
             "approvedBy" to if (status == TransactionStatus.APPROVED.name) uid else "",
             "createdAt" to FieldValue.serverTimestamp()
         )
 
-        awaitWriteOfflineSafe(docRef.set(payload), OperationType.CREATE, path)
+        awaitWriteOfflineSafe(docRef.set(payload, SetOptions.merge()), OperationType.CREATE, path)
         logAudit("RECORD_INSTALLMENT", "loanInstallments", docRef.id, "", "${loan.memberName}: ৳$amount ($status)")
 
         if (status == TransactionStatus.APPROVED.name) {

@@ -52,8 +52,8 @@ fun DashboardScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .background(ekotaSilverBackgroundBrush()),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 22.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Header Banner with ONLY Login Icon action on the right
@@ -71,7 +71,7 @@ fun DashboardScreen(
                         .fillMaxWidth()
                         .background(
                             Brush.horizontalGradient(
-                                colors = listOf(EmeraldGreenDark, EmeraldGreenPrimary, NavyBlueSecondary)
+                                colors = listOf(HeaderSlateNavy, Color(0xFF164E63), EmeraldGreenPrimary)
                             )
                         )
                         .padding(horizontal = 20.dp, vertical = 20.dp)
@@ -252,7 +252,7 @@ fun DashboardScreen(
                 text = "সমিতির সার্বিক সারসংক্ষেপ",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
+                color = ekotaSectionTitleColor()
             )
         }
 
@@ -379,11 +379,14 @@ fun DashboardScreen(
 
         // Dedicated Separate Fine Sheet Card (10 BDT weekly fine kept strictly separate)
         item {
+            val fineAccent = VibrantCardAccents[6]
             Card(
                 shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (LocalIsDarkEkotaTheme.current) MaterialTheme.colorScheme.surface else fineAccent.softSurface
+                ),
+                border = BorderStroke(1.2.dp, fineAccent.gradient.first().copy(alpha = 0.55f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onNavigateToFines() }
@@ -408,13 +411,13 @@ fun DashboardScreen(
                                 modifier = Modifier
                                     .size(42.dp)
                                     .clip(CircleShape)
-                                    .background(ekotaBadgeWarningBg()),
+                                    .background(Brush.linearGradient(fineAccent.gradient)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ReceiptLong,
                                     contentDescription = "জরিমানা শিট",
-                                    tint = ekotaWarningTextColor(),
+                                    tint = Color.White,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -424,7 +427,7 @@ fun DashboardScreen(
                                     text = "জরিমানা শিট (৳১০/সপ্তাহ)",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = if (LocalIsDarkEkotaTheme.current) MaterialTheme.colorScheme.onSurface else fineAccent.accentInk
                                 )
                                 Text(
                                     text = "মূল সঞ্চয় ও ঋণ থেকে সম্পূর্ণ আলাদা হিসাব",
@@ -438,7 +441,7 @@ fun DashboardScreen(
 
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = NavyBlueSecondary
+                            color = fineAccent.gradient.first()
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
@@ -547,7 +550,7 @@ fun DashboardScreen(
                 text = "দ্রুত কার্যক্রম",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
+                color = ekotaSectionTitleColor()
             )
         }
 
@@ -688,9 +691,10 @@ fun DashboardMetricCard(
             ) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = 0.96f),
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis
@@ -698,8 +702,8 @@ fun DashboardMetricCard(
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     text = value,
-                    fontSize = 17.sp,
-                    lineHeight = 23.sp,
+                    fontSize = 18.sp,
+                    lineHeight = 24.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White,
                     maxLines = 1,

@@ -1,13 +1,19 @@
 package com.example.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.ai.AiCallAssistantService
+import com.example.ai.AiCallPlanResult
+import com.example.data.local.OfflineTransactionType
+import com.example.data.local.PendingOfflineTransactionEntity
 import com.example.data.model.*
 import com.example.data.repository.EkotaRepository
 import com.example.data.repository.SyncStatusState
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -15,6 +21,13 @@ sealed interface UiState<out T> {
     data object Loading : UiState<Nothing>
     data class Success<T>(val data: T) : UiState<T>
     data class Error(val message: String) : UiState<Nothing>
+}
+
+sealed interface AiCallUiState {
+    data object Idle : AiCallUiState
+    data object Loading : AiCallUiState
+    data class Success(val result: AiCallPlanResult) : AiCallUiState
+    data class Error(val message: String) : AiCallUiState
 }
 
 data class DashboardSummary(
@@ -71,14 +84,31 @@ class MainViewModel(
     private val _lastSyncedAtMillis = MutableStateFlow(0L)
 
     private val _pendingMemberIds = MutableStateFlow<Set<String>>(emptySet())
-    private val _pendingSavingsIds = MutableStateFlow<Set<String>>(emptySet())
-    val pendingSavingsIds: StateFlow<Set<String>> = _pendingSavingsIds.asStateFlow()
+    private val _firestorePendingSavingsIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _firestorePendingInstallmentIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _roomPendingTransactions = MutableStateFlow<List<PendingOfflineTransactionEntity>>(emptyList())
+
+    val pendingSavingsIds: StateFlow<Set<String>> = combine(
+        _firestorePendingSavingsIds,
+        _roomPendingTransactions
+    ) { fsIds, roomList ->
+        fsIds + roomList.filter { it.transactionType == OfflineTransactionType.SAVINGS }.map { it.id }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private val _pendingLoanIds = MutableStateFlow<Set<String>>(emptySet())
-    private val _pendingInstallmentIds = MutableStateFlow<Set<String>>(emptySet())
-    val pendingInstallmentIds: StateFlow<Set<String>> = _pendingInstallmentIds.asStateFlow()
+
+    val pendingInstallmentIds: StateFlow<Set<String>> = combine(
+        _firestorePendingInstallmentIds,
+        _roomPendingTransactions
+    ) { fsIds, roomList ->
+        fsIds + roomList.filter { it.transactionType == OfflineTransactionType.LOAN_INSTALLMENT }.map { it.id }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     private val _pendingFineIds = MutableStateFlow<Set<String>>(emptySet())
+
+    private val aiCallAssistantService by lazy { AiCallAssistantService() }
+    private val _aiCallUiState = MutableStateFlow<AiCallUiState>(AiCallUiState.Idle)
+    val aiCallUiState: StateFlow<AiCallUiState> = _aiCallUiState.asStateFlow()
 
     val syncStatus: StateFlow<SyncStatusState> = combine(
         _isOnline,
@@ -87,9 +117,9 @@ class MainViewModel(
         _isFromCache,
         combine(
             _pendingMemberIds,
-            _pendingSavingsIds,
+            pendingSavingsIds,
             _pendingLoanIds,
-            _pendingInstallmentIds,
+            pendingInstallmentIds,
             _pendingFineIds
         ) { m, s, l, i, f -> m + s + l + i + f }
     ) { online, cloudAuthed, syncing, fromCache, allPendingIds ->
@@ -205,6 +235,7 @@ class MainViewModel(
         }
 
         observeConnectivityChanges()
+        observeRoomOfflineQueue()
 
         val firebaseUser = repository.getCurrentUser()
         _isCloudSynced.value = firebaseUser != null
@@ -226,6 +257,20 @@ class MainViewModel(
         }
 
         viewModelScope.launch {
+            // Immediately warm UI from Room offline cache so Field Officers work seamlessly with 0 signal
+            try {
+                val cachedMembers = repository.loadCachedMembersFromRoom()
+                if (cachedMembers.isNotEmpty() && _members.value.isEmpty()) {
+                    _members.value = cachedMembers
+                    _membersUiState.value = UiState.Success(cachedMembers)
+                }
+                val cachedLoans = repository.loadCachedLoansFromRoom()
+                if (cachedLoans.isNotEmpty() && _loans.value.isEmpty()) {
+                    _loans.value = cachedLoans
+                }
+            } catch (_: Exception) {
+            }
+
             var resolvedAdmin = _userRole.value == UserRole.ADMIN
             try {
                 val profile = repository.getOrCreateUserProfile(
@@ -242,11 +287,11 @@ class MainViewModel(
                 // Continue to attach offline-cached listeners even if profile creation encountered a transient error
             }
 
-            // Migrate any previously entered local entries into Firestore persistent queue
+            // Migrate any previously entered local entries & flush any pending Room transactions when online
             launch {
                 try {
-                    val migrated = repository.migrateLocalEntriesToFirestore(isAdmin = resolvedAdmin)
-                    if (migrated > 0 && repository.isOnline()) {
+                    repository.migrateLocalEntriesToFirestore(isAdmin = resolvedAdmin)
+                    if (repository.isOnline()) {
                         syncPendingOfflineEntries()
                     }
                 } catch (_: Exception) {
@@ -273,15 +318,23 @@ class MainViewModel(
                             .firstOrNull()
                         if (firestoreError == null && error is CancellationException) throw error
                         val rootError = firestoreError ?: error
-                        _membersUiState.value = UiState.Error(
-                            rootError.localizedMessage ?: "Firestore থেকে সদস্য তালিকা লোড করতে সমস্যা হয়েছে"
-                        )
+                        if (_members.value.isEmpty()) {
+                            _membersUiState.value = UiState.Error(
+                                rootError.localizedMessage ?: "Firestore থেকে সদস্য তালিকা লোড করতে সমস্যা হয়েছে"
+                            )
+                        }
                     }
                     .collect { update ->
                         _members.value = update.items
                         _membersUiState.value = UiState.Success(update.items)
                         _pendingMemberIds.value = update.pendingDocumentIds
                         _isFromCache.value = update.isFromCache
+                        launch {
+                            try {
+                                repository.cacheMembersInRoom(update.items)
+                            } catch (_: Exception) {
+                            }
+                        }
                     }
             }
 
@@ -289,8 +342,8 @@ class MainViewModel(
                 repository.observeSavingsWithMetadata()
                     .catch { /* Keep current cached records if stream fails */ }
                     .collect { update ->
-                        _savingsRecords.value = update.items
-                        _pendingSavingsIds.value = update.pendingDocumentIds
+                        _savingsRecords.value = mergeCloudAndRoomSavings(update.items, _roomPendingTransactions.value)
+                        _firestorePendingSavingsIds.value = update.pendingDocumentIds
                         _isFromCache.value = update.isFromCache
                         if (!update.hasPendingWrites && !update.isFromCache) {
                             _lastSyncedAtMillis.value = System.currentTimeMillis()
@@ -310,6 +363,12 @@ class MainViewModel(
                     .collect { update ->
                         _loans.value = update.items
                         _pendingLoanIds.value = update.pendingDocumentIds
+                        launch {
+                            try {
+                                repository.cacheLoansInRoom(update.items)
+                            } catch (_: Exception) {
+                            }
+                        }
                     }
             }
 
@@ -317,8 +376,8 @@ class MainViewModel(
                 repository.observeLoanInstallmentsWithMetadata()
                     .catch { }
                     .collect { update ->
-                        _loanInstallments.value = update.items
-                        _pendingInstallmentIds.value = update.pendingDocumentIds
+                        _loanInstallments.value = mergeCloudAndRoomInstallments(update.items, _roomPendingTransactions.value)
+                        _firestorePendingInstallmentIds.value = update.pendingDocumentIds
                     }
             }
 
@@ -369,13 +428,63 @@ class MainViewModel(
         }
     }
 
+    private fun observeRoomOfflineQueue() {
+        viewModelScope.launch {
+            repository.observePendingRoomTransactions()
+                .catch { /* Keep resilient */ }
+                .collect { pendingList ->
+                    _roomPendingTransactions.value = pendingList
+                    if (pendingList.isNotEmpty()) {
+                        _savingsRecords.value = mergeCloudAndRoomSavings(_savingsRecords.value, pendingList)
+                        _loanInstallments.value = mergeCloudAndRoomInstallments(_loanInstallments.value, pendingList)
+                    }
+                }
+        }
+    }
+
+    private fun mergeCloudAndRoomSavings(
+        cloudItems: List<SavingsRecord>,
+        roomPending: List<PendingOfflineTransactionEntity>
+    ): List<SavingsRecord> {
+        val pendingSavings = roomPending
+            .filter { it.transactionType == OfflineTransactionType.SAVINGS }
+            .map { it.toSavingsRecord() }
+        if (pendingSavings.isEmpty()) return cloudItems
+        val existingKeys = cloudItems.map { "${it.memberId}_${it.collectionDate}" }.toSet()
+        val missingFromCloud = pendingSavings.filter { rec ->
+            rec.id !in cloudItems.map { it.id } && "${rec.memberId}_${rec.collectionDate}" !in existingKeys
+        }
+        return cloudItems + missingFromCloud
+    }
+
+    private fun mergeCloudAndRoomInstallments(
+        cloudItems: List<LoanInstallment>,
+        roomPending: List<PendingOfflineTransactionEntity>
+    ): List<LoanInstallment> {
+        val pendingInsts = roomPending.filter { it.transactionType == OfflineTransactionType.LOAN_INSTALLMENT }
+        if (pendingInsts.isEmpty()) return cloudItems
+        val existingIds = cloudItems.map { it.id }.toSet()
+        val existingLoanDates = cloudItems.map { "${it.loanId}_${it.installmentDate}" }.toSet()
+        val toAdd = pendingInsts.mapIndexedNotNull { idx, tx ->
+            if (tx.id in existingIds || "${tx.loanId}_${tx.collectionDate}" in existingLoanDates) {
+                null
+            } else {
+                val serial = com.example.util.BengaliUtils.toBengaliDigits(
+                    cloudItems.count { it.loanId == tx.loanId } + idx + 1
+                )
+                tx.toLoanInstallment(serial)
+            }
+        }
+        return cloudItems + toAdd
+    }
+
     private fun observeConnectivityChanges() {
         viewModelScope.launch {
             var previouslyOnline = _isOnline.value
             repository.observeConnectivity().collect { online ->
                 _isOnline.value = online
                 if (online && !previouslyOnline && repository.getCurrentUser() != null) {
-                    // Connectivity just returned — flush Firestore persistent write queue automatically
+                    // Connectivity just returned — flush Room queue & Firestore persistent write queue automatically
                     syncPendingOfflineEntries()
                 }
                 previouslyOnline = online
@@ -387,6 +496,7 @@ class MainViewModel(
         if (repository.getCurrentUser() == null) return false
         _isSyncing.value = true
         return try {
+            repository.syncPendingOfflineTransactions()
             val synced = repository.waitForPendingWritesAndSync()
             if (synced) {
                 _lastSyncedAtMillis.value = System.currentTimeMillis()
@@ -645,28 +755,37 @@ class MainViewModel(
             return
         }
 
-        onSuccess()
         viewModelScope.launch {
             try {
-                repository.recordSavingsBatchEntries(
-                    primaryDate = collectionDate,
-                    recordsToWrite = recordsToWrite,
-                    netNewCashCollected = netNewCash,
-                    isOfficer = isOfficer
-                )
-                if (generatedFines.isNotEmpty()) {
-                    repository.upsertFinesBatch(generatedFines)
+                // Persist in Room first to guarantee zero data loss and prevent same-week duplicates
+                val enqueuedRecords = repository.enqueueOfflineSavingsBatch(recordsToWrite, isOfficer)
+                if (enqueuedRecords.isEmpty()) {
+                    onError("এই সদস্যের সঞ্চয় অফলাইন বা অনলাইনে ইতিমধ্যেই এই সপ্তাহে জমা করা হয়েছে।")
+                    return@launch
                 }
-                if (isOfficer) {
-                    notifyAdminOfOfficerSubmission(
-                        title = "নতুন সঞ্চয় অনুমোদনের অনুরোধ",
-                        body = "$officerName সদস্য ${member.name}-এর $collectionDate তারিখের ৳${amount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
-                        transactionType = "SAVINGS",
-                        transactionId = "${member.id}_${collectionDate.replace("/", "-")}",
-                        memberName = member.name,
-                        amount = amount,
-                        officerName = officerName
+                onSuccess()
+                if (repository.isOnline()) {
+                    repository.recordSavingsBatchEntries(
+                        primaryDate = collectionDate,
+                        recordsToWrite = enqueuedRecords,
+                        netNewCashCollected = netNewCash,
+                        isOfficer = isOfficer
                     )
+                    if (generatedFines.isNotEmpty()) {
+                        repository.upsertFinesBatch(generatedFines)
+                    }
+                    if (isOfficer) {
+                        notifyAdminOfOfficerSubmission(
+                            title = "নতুন সঞ্চয় অনুমোদনের অনুরোধ",
+                            body = "$officerName সদস্য ${member.name}-এর $collectionDate তারিখের ৳${amount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
+                            transactionType = "SAVINGS",
+                            transactionId = "${member.id}_${collectionDate.replace("/", "-")}",
+                            memberName = member.name,
+                            amount = amount,
+                            officerName = officerName
+                        )
+                    }
+                    enqueuedRecords.forEach { repository.markRoomTransactionSynced(it.id) }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -859,25 +978,33 @@ class MainViewModel(
         viewModelScope.launch {
             _isSavingBatch.value = true
             try {
-                repository.recordSavingsBatchEntries(
-                    primaryDate = collectionDate,
-                    recordsToWrite = recordsToWrite,
-                    netNewCashCollected = netNewCashTotal,
-                    isOfficer = isOfficer
-                )
-                if (generatedFines.isNotEmpty()) {
-                    repository.upsertFinesBatch(generatedFines)
+                val enqueuedRecords = repository.enqueueOfflineSavingsBatch(recordsToWrite, isOfficer)
+                if (enqueuedRecords.isEmpty()) {
+                    onError("এই সপ্তাহে ($collectionDate) ইতিমধ্যেই সকল সদস্যের সঞ্চয় জমা রয়েছে।")
+                    return@launch
                 }
-                if (isOfficer) {
-                    notifyAdminOfOfficerSubmission(
-                        title = "নতুন সাপ্তাহিক সঞ্চয় অনুমোদনের অনুরোধ",
-                        body = "$officerName $collectionDate তারিখে ${paidCount} জন সদস্যের মোট ৳${totalEnteredAmount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
-                        transactionType = "SAVINGS_BATCH",
-                        transactionId = collectionDate.replace("/", "-"),
-                        memberName = "${paidCount} জন সদস্য",
-                        amount = totalEnteredAmount,
-                        officerName = officerName
+                if (repository.isOnline()) {
+                    repository.recordSavingsBatchEntries(
+                        primaryDate = collectionDate,
+                        recordsToWrite = enqueuedRecords,
+                        netNewCashCollected = netNewCashTotal,
+                        isOfficer = isOfficer
                     )
+                    if (generatedFines.isNotEmpty()) {
+                        repository.upsertFinesBatch(generatedFines)
+                    }
+                    if (isOfficer) {
+                        notifyAdminOfOfficerSubmission(
+                            title = "নতুন সাপ্তাহিক সঞ্চয় অনুমোদনের অনুরোধ",
+                            body = "$officerName $collectionDate তারিখে ${paidCount} জন সদস্যের মোট ৳${totalEnteredAmount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
+                            transactionType = "SAVINGS_BATCH",
+                            transactionId = collectionDate.replace("/", "-"),
+                            memberName = "${paidCount} জন সদস্য",
+                            amount = totalEnteredAmount,
+                            officerName = officerName
+                        )
+                    }
+                    enqueuedRecords.forEach { repository.markRoomTransactionSynced(it.id) }
                 }
                 onDetails(catchUpCount, generatedFines.size)
                 onSuccess(paidCount, totalEnteredAmount)
@@ -1308,79 +1435,106 @@ class MainViewModel(
             onError("এই ঋণের কিস্তি এই সপ্তাহে ($date) ইতিমধ্যেই সাবমিট করা হয়েছে। এক সপ্তাহে দুইবার সাবমিট করা যাবে না।")
             return
         }
+        val isOfficer = _userRole.value == UserRole.FIELD_OFFICER
+        val officerName = _currentUserProfile.value?.displayName ?: if (isOfficer) "মাঠ কর্মকর্তা" else "অ্যাডমিন"
+        val status = if (isOfficer) TransactionStatus.PENDING.name else TransactionStatus.APPROVED.name
+        val deterministicInstId = "inst_${loan.id}_${date.replace("/", "-")}"
+        val serial = com.example.util.BengaliUtils.toBengaliDigits(
+            _loanInstallments.value.count { it.loanId == loan.id } + 1
+        )
+        val newInst = LoanInstallment(
+            id = deterministicInstId,
+            loanId = loan.id,
+            memberId = loan.memberId,
+            memberName = loan.memberName,
+            serialNumber = serial,
+            installmentDate = date,
+            amount = amount,
+            officerId = currentUserId,
+            officerName = officerName,
+            status = status,
+            createdBy = currentUserId,
+            approvedBy = if (status == TransactionStatus.APPROVED.name) currentUserId else ""
+        )
+
+        if (repository.getCurrentUser() == null) {
+            val updatedInsts = _loanInstallments.value + newInst
+            _loanInstallments.value = updatedInsts
+            repository.saveLocalLoanInstallments(updatedInsts)
+
+            if (!isOfficer) {
+                val nextDate = com.example.util.BengaliUtils.addDaysToDateStr(date, 7)
+                val updatedLoans = _loans.value.map { existing ->
+                    if (existing.id == loan.id) {
+                        val catchUp = com.example.util.SavingsAndFineCalculator.calculateLoanCatchUp(existing, amount)
+                        val newStatus = if (catchUp.isFullyPaid) LoanStatus.PAID.name else LoanStatus.ACTIVE.name
+                        existing.copy(
+                            totalPaid = catchUp.newTotalPaid,
+                            remainingLoan = catchUp.newRemainingLoan,
+                            missedInstallments = catchUp.remainingMissedInstallments,
+                            nextInstallmentDate = nextDate,
+                            status = newStatus
+                        )
+                    } else existing
+                }
+                _loans.value = updatedLoans
+                repository.saveLocalLoans(updatedLoans)
+
+                val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+                val updatedLedger = _fundLedger.value + FundLedgerEntry(
+                    id = "ledger_$deterministicInstId",
+                    date = date,
+                    description = "ঋণের কিস্তি আদায় (${loan.memberName})",
+                    moneyIn = amount,
+                    moneyOut = 0.0,
+                    balance = prevBalance + amount,
+                    referenceId = deterministicInstId,
+                    type = LedgerType.LOAN_INSTALLMENT.name,
+                    createdBy = currentUserId
+                )
+                _fundLedger.value = updatedLedger
+                repository.saveLocalFundLedger(updatedLedger)
+            } else {
+                notifyAdminOfOfficerSubmission(
+                    title = "নতুন ঋণ কিস্তি অনুমোদনের অনুরোধ",
+                    body = "$officerName সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($date) পাঠিয়েছেন।",
+                    transactionType = "LOAN_INSTALLMENT",
+                    transactionId = deterministicInstId,
+                    memberName = loan.memberName,
+                    amount = amount,
+                    officerName = officerName
+                )
+            }
+            onSuccess()
+            return
+        }
+
         viewModelScope.launch {
             try {
-                val isOfficer = _userRole.value == UserRole.FIELD_OFFICER
-                if (repository.getCurrentUser() != null) {
-                    repository.recordLoanInstallment(loan, date, amount, isOfficer)
-                } else {
-                    val instId = "inst_${System.currentTimeMillis()}"
-                    val serial = com.example.util.BengaliUtils.toBengaliDigits(
-                        _loanInstallments.value.count { it.loanId == loan.id } + 1
-                    )
-                    val status = if (isOfficer) TransactionStatus.PENDING.name else TransactionStatus.APPROVED.name
-                    val newInst = LoanInstallment(
-                        id = instId,
-                        loanId = loan.id,
-                        memberId = loan.memberId,
-                        memberName = loan.memberName,
-                        serialNumber = serial,
-                        installmentDate = date,
-                        amount = amount,
-                        officerId = currentUserId,
-                        status = status,
-                        createdBy = currentUserId,
-                        approvedBy = if (status == TransactionStatus.APPROVED.name) currentUserId else ""
-                    )
-                    val updatedInsts = _loanInstallments.value + newInst
-                    _loanInstallments.value = updatedInsts
-                    repository.saveLocalLoanInstallments(updatedInsts)
-
-                    if (!isOfficer) {
-                        val nextDate = com.example.util.BengaliUtils.addDaysToDateStr(date, 7)
-                        val updatedLoans = _loans.value.map { existing ->
-                            if (existing.id == loan.id) {
-                                val catchUp = com.example.util.SavingsAndFineCalculator.calculateLoanCatchUp(existing, amount)
-                                val newStatus = if (catchUp.isFullyPaid) LoanStatus.PAID.name else LoanStatus.ACTIVE.name
-                                existing.copy(
-                                    totalPaid = catchUp.newTotalPaid,
-                                    remainingLoan = catchUp.newRemainingLoan,
-                                    missedInstallments = catchUp.remainingMissedInstallments,
-                                    nextInstallmentDate = nextDate,
-                                    status = newStatus
-                                )
-                            } else existing
-                        }
-                        _loans.value = updatedLoans
-                        repository.saveLocalLoans(updatedLoans)
-
-                        val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-                        val updatedLedger = _fundLedger.value + FundLedgerEntry(
-                            id = "ledger_$instId",
-                            date = date,
-                            description = "ঋণের কিস্তি আদায় (${loan.memberName})",
-                            moneyIn = amount,
-                            moneyOut = 0.0,
-                            balance = prevBalance + amount,
-                            referenceId = instId,
-                            type = LedgerType.LOAN_INSTALLMENT.name,
-                            createdBy = currentUserId
-                        )
-                        _fundLedger.value = updatedLedger
-                        repository.saveLocalFundLedger(updatedLedger)
-                    }
+                // Stage in Room first for offline guarantee & duplicate prevention across connectivity drops
+                val enqueued = repository.enqueueOfflineLoanInstallment(newInst, isOfficer)
+                if (!enqueued) {
+                    onError("এই ঋণের কিস্তি অফলাইন কিউতে ইতিমধ্যেই এই সপ্তাহে সংরক্ষিত রয়েছে।")
+                    return@launch
                 }
-                if (isOfficer) {
-                    val officerDisplay = _currentUserProfile.value?.displayName ?: "মাঠ কর্মকর্তা"
-                    notifyAdminOfOfficerSubmission(
-                        title = "নতুন ঋণ কিস্তি অনুমোদনের অনুরোধ",
-                        body = "$officerDisplay সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($date) পাঠিয়েছেন।",
-                        transactionType = "LOAN_INSTALLMENT",
-                        transactionId = loan.id,
-                        memberName = loan.memberName,
-                        amount = amount,
-                        officerName = officerDisplay
-                    )
+                if (_loanInstallments.value.none { it.id == newInst.id }) {
+                    _loanInstallments.value = _loanInstallments.value + newInst
+                }
+
+                if (repository.isOnline()) {
+                    repository.recordLoanInstallment(loan, date, amount, isOfficer, officerName)
+                    if (isOfficer) {
+                        notifyAdminOfOfficerSubmission(
+                            title = "নতুন ঋণ কিস্তি অনুমোদনের অনুরোধ",
+                            body = "$officerName সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($date) পাঠিয়েছেন।",
+                            transactionType = "LOAN_INSTALLMENT",
+                            transactionId = deterministicInstId,
+                            memberName = loan.memberName,
+                            amount = amount,
+                            officerName = officerName
+                        )
+                    }
+                    repository.markRoomTransactionSynced(deterministicInstId)
                 }
                 onSuccess()
             } catch (e: CancellationException) {
@@ -1908,6 +2062,7 @@ class MainViewModel(
                     repository.resetAllCloudData()
                 }
                 repository.clearAllLocalData()
+                repository.clearAllRoomData()
 
                 _members.value = emptyList()
                 _membersUiState.value = UiState.Success(emptyList())
@@ -1925,6 +2080,39 @@ class MainViewModel(
                 onError(e.localizedMessage ?: "সব ডাটা রিসেট করতে সমস্যা হয়েছে")
             }
         }
+    }
+
+    fun generateAiCallPlan(customInstruction: String = "") {
+        viewModelScope.launch {
+            _aiCallUiState.value = AiCallUiState.Loading
+            try {
+                val result = aiCallAssistantService.buildCallPlan(
+                    orgName = _appSettings.value.orgName,
+                    members = _members.value,
+                    savingsRecords = _savingsRecords.value,
+                    loans = _loans.value,
+                    fines = _fines.value,
+                    customInstruction = customInstruction
+                )
+                _aiCallUiState.value = AiCallUiState.Success(result)
+            } catch (e: TimeoutCancellationException) {
+                Log.e("MainViewModel", "AI call plan timed out", e)
+                _aiCallUiState.value = AiCallUiState.Error(
+                    "AI কল তালিকা তৈরি করতে ৬০ সেকেন্ডের বেশি সময় লেগেছে। অনুগ্রহ করে আবার চেষ্টা করুন।"
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "AI call plan generation failed", e)
+                _aiCallUiState.value = AiCallUiState.Error(
+                    e.localizedMessage ?: "AI কল তালিকা তৈরি করা যায়নি"
+                )
+            }
+        }
+    }
+
+    fun resetAiCallState() {
+        _aiCallUiState.value = AiCallUiState.Idle
     }
 }
 

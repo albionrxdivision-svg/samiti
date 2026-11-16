@@ -199,6 +199,7 @@ class LocalDataStore(context: Context) {
                 amount = obj.optDouble("amount", 0.0),
                 isMissed = obj.optBoolean("isMissed", false),
                 officerId = obj.optString("officerId"),
+                officerName = obj.optString("officerName"),
                 status = obj.optString("status", TransactionStatus.APPROVED.name),
                 createdBy = obj.optString("createdBy"),
                 approvedBy = obj.optString("approvedBy")
@@ -220,6 +221,7 @@ class LocalDataStore(context: Context) {
                     put("amount", inst.amount)
                     put("isMissed", inst.isMissed)
                     put("officerId", inst.officerId)
+                    put("officerName", inst.officerName)
                     put("status", inst.status)
                     put("createdBy", inst.createdBy)
                     put("approvedBy", inst.approvedBy)

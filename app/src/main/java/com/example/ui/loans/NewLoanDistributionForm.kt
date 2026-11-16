@@ -42,6 +42,7 @@ fun NewLoanDistributionForm(
     members: List<Member>,
     defaultInterestRatePercent: Double,
     isSaving: Boolean,
+    existingLoans: List<Loan> = emptyList(),
     onDistribute: (Loan, Member?) -> Unit,
     onCancel: (() -> Unit)? = null
 ) {
@@ -138,6 +139,23 @@ fun NewLoanDistributionForm(
     }
 
     val finalWeeklyInstallment = weeklyInstallmentText.toDoubleOrNull() ?: 0.0
+    val alreadyDistributedThisWeek = remember(
+        borrowerMode,
+        selectedMember,
+        newBorrowerName,
+        loanDate,
+        existingLoans
+    ) {
+        existingLoans.any { existing ->
+            val sameMember = if (borrowerMode == BorrowerSourceMode.EXISTING_MEMBER && activeMembers.isNotEmpty()) {
+                val m = selectedMember
+                m != null && (existing.memberId == m.id || existing.memberName.trim().equals(m.name.trim(), ignoreCase = true))
+            } else {
+                newBorrowerName.isNotBlank() && existing.memberName.trim().equals(newBorrowerName.trim(), ignoreCase = true)
+            }
+            sameMember && com.example.util.SavingsAndFineCalculator.isSameWeek(existing.loanDate, loanDate)
+        }
+    }
     val scrollState = rememberScrollState()
 
     Box(
@@ -695,13 +713,13 @@ fun NewLoanDistributionForm(
                         LoanSummaryRow(
                             label = "মোট পরিশোধযোগ্য (Total Payable)",
                             value = BengaliUtils.formatTaka(calculation.totalPayable),
-                            valueColor = Color(0xFFFEF08A),
+                            valueColor = Color.White,
                             isBold = true
                         )
                         LoanSummaryRow(
                             label = "সাপ্তাহিক কিস্তি (${BengaliUtils.toBengaliDigits(weeks.coerceAtLeast(0))} সপ্তাহ)",
                             value = BengaliUtils.formatTaka(finalWeeklyInstallment),
-                            valueColor = Color(0xFFDCFCE7),
+                            valueColor = Color.White,
                             isBold = true
                         )
                     }
@@ -734,6 +752,34 @@ fun NewLoanDistributionForm(
                 }
             }
 
+            if (alreadyDistributedThisWeek) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ekotaBadgeSuccessBg(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("loan_already_distributed_week_notice")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = ekotaSuccessTextColor()
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "এই সদস্যকে এই সপ্তাহে ($loanDate) ইতিমধ্যেই ঋণ বিতরণ করা হয়েছে। এক সপ্তাহে দুইবার সাবমিট হবে না।",
+                            color = ekotaSuccessTextColor(),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             // Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -753,8 +799,9 @@ fun NewLoanDistributionForm(
                     }
                 }
 
-                Button(
-                    onClick = {
+                if (!alreadyDistributedThisWeek) {
+                    Button(
+                        onClick = {
                         val isDirectNewBorrower = borrowerMode == BorrowerSourceMode.NEW_LOAN_MEMBER || activeMembers.isEmpty()
                         val existingMember = selectedMember
                         val interestVal = calculation.interest
@@ -837,10 +884,11 @@ fun NewLoanDistributionForm(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("সংরক্ষণ হচ্ছে...", fontWeight = FontWeight.Bold)
-                    } else {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("ঋণ বিতরণ সংরক্ষণ করুন", fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("ঋণ বিতরণ সংরক্ষণ করুন", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

@@ -5,13 +5,19 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.example.ui.theme.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -139,57 +145,63 @@ fun MainAppNavigation(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 4.dp,
-                modifier = Modifier.testTag("bottom_nav_bar")
-            ) {
-                bottomNavItems.forEach { destination ->
-                    val isSelected = currentDestination == destination
-                    val navLabel = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
-                        "অ্যাকাউন্ট"
-                    } else {
-                        destination.titleBengali
+            Column {
+                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 0.dp,
+                    modifier = Modifier.testTag("bottom_nav_bar")
+                ) {
+                    bottomNavItems.forEach { destination ->
+                        val isSelected = currentDestination == destination
+                        val navLabel = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
+                            "অ্যাকাউন্ট"
+                        } else {
+                            destination.titleBengali
+                        }
+                        NavigationBarItem(
+                            selected = isSelected,
+                            onClick = { currentDestination = destination },
+                            icon = {
+                                Icon(
+                                    imageVector = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
+                                        Icons.Default.AccountCircle
+                                    } else {
+                                        destination.icon
+                                    },
+                                    contentDescription = navLabel
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = navLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = HeaderSlateNavy,
+                                selectedTextColor = HeaderSlateNavy,
+                                indicatorColor = Color(0xFFD2E0F2),
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            modifier = Modifier.testTag("nav_${destination.name.lowercase()}")
+                        )
                     }
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = { currentDestination = destination },
-                        icon = {
-                            Icon(
-                                imageVector = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
-                                    Icons.Default.AccountCircle
-                                } else {
-                                    destination.icon
-                                },
-                                contentDescription = navLabel
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = navLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        modifier = Modifier.testTag("nav_${destination.name.lowercase()}")
-                    )
                 }
             }
         }
     ) { innerPadding ->
-        Surface(
+        Box(
             modifier = Modifier
+                .fillMaxSize()
+                .background(ekotaSilverBackgroundBrush())
                 .padding(innerPadding)
         ) {
             when (currentDestination) {

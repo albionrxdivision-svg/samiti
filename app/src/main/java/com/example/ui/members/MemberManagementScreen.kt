@@ -1,10 +1,11 @@
 package com.example.ui.members
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -81,7 +83,7 @@ fun MemberManagementScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 )
@@ -90,7 +92,7 @@ fun MemberManagementScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddDialog = true },
-                containerColor = EmeraldGreenPrimary,
+                containerColor = CardBlueGradient.first(),
                 contentColor = Color.White,
                 modifier = Modifier.testTag("add_member_fab")
             ) {
@@ -102,7 +104,7 @@ fun MemberManagementScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
                 .padding(16.dp)
         ) {
             // Area Filter Chips
@@ -118,9 +120,10 @@ fun MemberManagementScreen(
                     FilterChip(
                         selected = isSelected,
                         onClick = { selectedAreaFilter = area },
-                        label = { Text(area, maxLines = 1, softWrap = false) },
+                        label = { Text(area, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, maxLines = 1, softWrap = false) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = EmeraldGreenPrimary,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            selectedContainerColor = HeaderSlateNavy,
                             selectedLabelColor = Color.White,
                             labelColor = MaterialTheme.colorScheme.onSurface
                         ),
@@ -150,10 +153,11 @@ fun MemberManagementScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(filteredMembers, key = { it.id }) { member ->
+                    itemsIndexed(filteredMembers, key = { _, m -> m.id }) { index, member ->
                         MemberCard(
                             member = member,
                             isAdmin = isAdmin,
+                            cardAccentIndex = index,
                             onCardClick = { memberDetailsToShow = member },
                             onEditClick = { memberToEdit = member }
                         )
@@ -209,13 +213,19 @@ fun MemberManagementScreen(
 fun MemberCard(
     member: Member,
     isAdmin: Boolean = false,
+    cardAccentIndex: Int = 0,
     onCardClick: () -> Unit,
     onEditClick: () -> Unit
 ) {
+    val isDark = LocalIsDarkEkotaTheme.current
+    val accent = VibrantCardAccents[cardAccentIndex % VibrantCardAccents.size]
     Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDark) MaterialTheme.colorScheme.surface else accent.softSurface
+        ),
+        border = BorderStroke(1.dp, accent.gradient.first().copy(alpha = 0.42f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCardClick() }
@@ -225,18 +235,18 @@ fun MemberCard(
             modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Serial Circle Badge
+            // Vibrant Gradient Serial Circle Badge
             Box(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(Brush.linearGradient(accent.gradient)),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = BengaliUtils.toBengaliDigits(member.memberSerial),
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = Color.White,
                     style = MaterialTheme.typography.titleMedium
                 )
             }
@@ -280,7 +290,7 @@ fun MemberCard(
                     text = "সাপ্তাহিক সঞ্চয়: ${BengaliUtils.formatTaka(member.weeklySavingsAmount)}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (isDark) accent.gradient.last() else accent.accentInk,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -291,7 +301,11 @@ fun MemberCard(
                     onClick = onEditClick,
                     modifier = Modifier.testTag("edit_member_btn_${member.id}")
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = "সম্পাদনা", tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "সম্পাদনা",
+                        tint = if (isDark) accent.gradient.last() else accent.accentInk
+                    )
                 }
             }
         }

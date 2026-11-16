@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.example.data.local.StorageQuotaManager
 import com.example.data.model.AppSettings
 import com.example.data.model.AuthSession
 import com.example.data.model.FineRecord
@@ -77,11 +78,18 @@ fun SettingsScreen(
     val fines by viewModel.fines.collectAsState()
     val fundLedger by viewModel.fundLedger.collectAsState()
     val syncStatus by viewModel.syncStatus.collectAsState()
+    val aiCallUiState by viewModel.aiCallUiState.collectAsState()
 
     var showOrgSettingsDialog by remember { mutableStateOf(false) }
     var showRoleSwitcherDialog by remember { mutableStateOf(false) }
     var showApkManageDialog by remember { mutableStateOf(false) }
     var showOfflineSyncDialog by remember { mutableStateOf(false) }
+    var showStorageSettingsDialog by remember { mutableStateOf(false) }
+    var showAiAutoCallDialog by remember { mutableStateOf(false) }
+    var configuredStorageLimitBytes by remember {
+        mutableLongStateOf(StorageQuotaManager.getConfiguredLimitBytes(context))
+    }
+    val storageLimitLabel = StorageQuotaManager.formatBytesBn(configuredStorageLimitBytes)
 
     var backupJsonDialog by remember { mutableStateOf<String?>(null) }
     var showChangeOwnPasswordDialog by remember { mutableStateOf(false) }
@@ -123,7 +131,7 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = EmeraldGreenPrimary,
+                    containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 )
@@ -134,21 +142,33 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(MaterialTheme.colorScheme.background)
+                .background(ekotaSilverBackgroundBrush())
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             if (isAdminView) {
-                // SECTION 1: Organization & App Settings (Admin Only)
+                // SECTION 1: Organization, AI Auto-Call & App Settings (Admin Only)
                 item {
-                    SettingsSectionTitle("সমিতি ও সাধারণ সেটিংস")
+                    SettingsSectionTitle("সমিতি, AI ও সাধারণ সেটিংস")
                     SettingsListCard {
                         SettingsListRow(
                             title = "সমিতির সাধারণ সেটিংস",
                             subtitle = "${settings.orgName} • সুদ ${BengaliUtils.toBengaliDigits(settings.interestRatePercent.toInt())}%",
                             icon = Icons.Default.Business,
+                            iconTint = CardEmeraldGradient.first(),
                             testTagName = "settings_item_org",
                             onClick = { showOrgSettingsDialog = true }
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                        SettingsListRow(
+                            title = "AI অটো কল ও ভয়েস অ্যাসিস্ট্যান্ট",
+                            subtitle = "বকেয়া যাচাই করে স্বয়ংক্রিয় কল তালিকা ও বাংলা ভয়েস",
+                            icon = Icons.Default.SupportAgent,
+                            iconTint = CardPurpleGradient.first(),
+                            trailingBadge = "Gemini AI",
+                            trailingBadgeColor = CardPurpleGradient.first(),
+                            testTagName = "settings_ai_auto_call_item",
+                            onClick = { showAiAutoCallDialog = true }
                         )
                         if (isRealAdmin) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
@@ -156,7 +176,9 @@ fun SettingsScreen(
                                 title = "প্যানেল ভিউ পরিবর্তন",
                                 subtitle = "অ্যাডমিন প্যানেল ও মাঠ কর্মকর্তা প্যানেল দেখুন",
                                 icon = Icons.Default.SwitchAccount,
+                                iconTint = CardBlueGradient.first(),
                                 trailingBadge = "অ্যাডমিন",
+                                trailingBadgeColor = CardBlueGradient.first(),
                                 testTagName = "settings_item_role",
                                 onClick = { showRoleSwitcherDialog = true }
                             )
@@ -167,7 +189,9 @@ fun SettingsScreen(
                             title = "মোবাইল অ্যাপ ডাউনলোড (APK)",
                             subtitle = savedUrl.ifBlank { "অ্যাপ ডাউনলোড লিংক সেট বা শেয়ার করুন" },
                             icon = Icons.Default.PhoneAndroid,
+                            iconTint = CardTealGradient.first(),
                             trailingBadge = if (savedUrl.isNotBlank()) "লিংক সক্রিয়" else null,
+                            trailingBadgeColor = CardTealGradient.first(),
                             testTagName = "settings_item_apk",
                             onClick = { showApkManageDialog = true }
                         )
@@ -182,6 +206,7 @@ fun SettingsScreen(
                             title = if (isRealAdmin) "অ্যাডমিন পাসওয়ার্ড পরিবর্তন" else "নিজের পাসওয়ার্ড পরিবর্তন",
                             subtitle = "অ্যাকাউন্ট: $activeDisplayName",
                             icon = Icons.Default.LockReset,
+                            iconTint = CardOrangeGradient.first(),
                             testTagName = "change_own_password_button",
                             onClick = { showChangeOwnPasswordDialog = true }
                         )
@@ -191,6 +216,7 @@ fun SettingsScreen(
                                 title = "মাঠ কর্মকর্তার পাসওয়ার্ড সেট",
                                 subtitle = "মাঠ কর্মকর্তাদের লগইন পাসওয়ার্ড নির্ধারণ করুন",
                                 icon = Icons.Default.ManageAccounts,
+                                iconTint = CardPinkGradient.first(),
                                 testTagName = "admin_change_officer_password_button",
                                 onClick = { showAdminOfficerPasswordDialog = true }
                             )
@@ -211,6 +237,17 @@ fun SettingsScreen(
                             trailingBadgeColor = if (syncStatus.isOnline) ekotaSuccessTextColor() else ekotaWarningTextColor(),
                             testTagName = "settings_offline_sync_card",
                             onClick = { showOfflineSyncDialog = true }
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                        SettingsListRow(
+                            title = "ডাটা স্টোরেজ ও ব্যাকআপ ভল্ট",
+                            subtitle = "সর্বোচ্চ ১০০ GB পর্যন্ত ডাটা সংরক্ষণ (সক্রিয়: $storageLimitLabel)",
+                            icon = Icons.Default.Storage,
+                            iconTint = CardTealGradient.first(),
+                            trailingBadge = storageLimitLabel,
+                            trailingBadgeColor = EmeraldGreenPrimary,
+                            testTagName = "settings_storage_limit_item",
+                            onClick = { showStorageSettingsDialog = true }
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                         SettingsListRow(
@@ -255,6 +292,7 @@ fun SettingsScreen(
                             title = "মাঠ কর্মকর্তা অ্যাকাউন্ট",
                             subtitle = "অভ্যন্তরীণ সেটিংস, ব্যাকআপ এবং ডিলিট/রিসেট অ্যাডমিনের জন্য সংরক্ষিত।",
                             icon = Icons.Default.Lock,
+                            iconTint = CardPurpleGradient.first(),
                             testTagName = "officer_restricted_settings_notice",
                             onClick = null
                         )
@@ -264,8 +302,9 @@ fun SettingsScreen(
                                 title = "প্যানেল ভিউ পরিবর্তন",
                                 subtitle = "বর্তমান: মাঠ কর্মকর্তা ভিউ (অ্যাডমিন ভিউতে ফিরে যান)",
                                 icon = Icons.Default.SwitchAccount,
+                                iconTint = CardBlueGradient.first(),
                                 trailingBadge = "মাঠ কর্মকর্তা",
-                                trailingBadgeColor = NavyBlueSecondary,
+                                trailingBadgeColor = CardBlueGradient.first(),
                                 testTagName = "settings_item_role",
                                 onClick = { showRoleSwitcherDialog = true }
                             )
@@ -275,6 +314,7 @@ fun SettingsScreen(
                                 title = "নিজের পাসওয়ার্ড পরিবর্তন",
                                 subtitle = "অ্যাকাউন্ট: $activeDisplayName",
                                 icon = Icons.Default.LockReset,
+                                iconTint = CardOrangeGradient.first(),
                                 testTagName = "change_own_password_button",
                                 onClick = { showChangeOwnPasswordDialog = true }
                             )
@@ -302,6 +342,7 @@ fun SettingsScreen(
                         title = activeDisplayName,
                         subtitle = "ইমেইল: $activeEmail",
                         icon = Icons.Default.AccountCircle,
+                        iconTint = CardTealGradient.first(),
                         onClick = null
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
@@ -369,10 +410,40 @@ fun SettingsScreen(
     if (showOfflineSyncDialog) {
         OfflineCloudSyncDialog(
             syncStatus = syncStatus,
+            storageLimitLabel = storageLimitLabel,
+            onOpenStorageSettings = {
+                showOfflineSyncDialog = false
+                showStorageSettingsDialog = true
+            },
             onTriggerSync = { onResult ->
                 viewModel.triggerManualSync(onResult)
             },
             onDismiss = { showOfflineSyncDialog = false }
+        )
+    }
+
+    if (showStorageSettingsDialog) {
+        StorageSettingsDialog(
+            canEditQuota = true,
+            backupJsonProvider = { generateBackupJson(members, savingsRecords, loans, fundLedger) },
+            onLimitUpdated = { newLimitBytes ->
+                configuredStorageLimitBytes = newLimitBytes
+            },
+            onDismiss = { showStorageSettingsDialog = false }
+        )
+    }
+
+    if (showAiAutoCallDialog && isAdminView) {
+        AiAutoCallDialog(
+            orgName = settings.orgName,
+            aiCallUiState = aiCallUiState,
+            onGeneratePlan = { instruction ->
+                viewModel.generateAiCallPlan(instruction)
+            },
+            onDismiss = {
+                showAiAutoCallDialog = false
+                viewModel.resetAiCallState()
+            }
         )
     }
 
@@ -381,14 +452,14 @@ fun SettingsScreen(
             onDismissRequest = { backupJsonDialog = null },
             title = { Text("ডেটা ব্যাকআপ প্রস্তুত", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("সমিতির সকল সদস্য, সঞ্চয়, ঋণ এবং লেজার ডেটা ব্যাকআপ JSON ফরম্যাটে তৈরি হয়েছে:")
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 200.dp)
+                            .heightIn(max = 190.dp)
                     ) {
                         Text(
                             text = json.take(600) + if (json.length > 600) "... [truncated]" else "",
@@ -396,6 +467,29 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(8.dp)
                         )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            StorageQuotaManager.saveBackupToLocalArchive(context, json)
+                                .onSuccess { saved ->
+                                    Toast.makeText(
+                                        context,
+                                        "ফোনের স্টোরেজে সেভ হয়েছে (${StorageQuotaManager.formatBytesBn(saved.sizeBytes)})",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                                .onFailure { err ->
+                                    Toast.makeText(context, err.message ?: "সংরক্ষণ করা যায়নি", Toast.LENGTH_LONG).show()
+                                }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("save_backup_to_device_vault_button")
+                    ) {
+                        Icon(Icons.Default.SaveAlt, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("ফোনের স্টোরেজে সেভ করুন ($storageLimitLabel ভল্ট)")
                     }
                 }
             },
@@ -424,7 +518,7 @@ fun SettingsScreen(
         val currentSessionRole = if (isRealAdmin) UserRole.ADMIN else UserRole.FIELD_OFFICER
         val currentOfficerName = AuthSession.currentUserProfile?.displayName ?: "মাঠ কর্মকর্তা ১"
         ChangeOwnPasswordDialog(
-            accountLabel = if (isRealAdmin) "অ্যাডমিন (Nitai)" else "মাঠ কর্মকর্তা ($currentOfficerName)",
+            accountLabel = if (isRealAdmin) "অ্যাডমিন অ্যাকাউন্ট" else "মাঠ কর্মকর্তা ($currentOfficerName)",
             onDismiss = { showChangeOwnPasswordDialog = false },
             onSave = { currentPw, newPw, confirmPw ->
                 when (val result = passwordManager.changeOwnPassword(
@@ -531,7 +625,7 @@ private fun SettingsSectionTitle(title: String) {
         text = title,
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary,
+        color = ekotaSectionTitleColor(),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
@@ -546,8 +640,8 @@ private fun SettingsListCard(
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.fillMaxWidth(), content = content)
@@ -889,6 +983,8 @@ private fun ApkManagementDialog(
 @Composable
 private fun OfflineCloudSyncDialog(
     syncStatus: com.example.data.repository.SyncStatusState,
+    storageLimitLabel: String,
+    onOpenStorageSettings: () -> Unit,
     onTriggerSync: ((Boolean, String) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -905,10 +1001,21 @@ private fun OfflineCloudSyncDialog(
                     color = if (syncStatus.isOnline) ekotaSuccessTextColor() else ekotaWarningTextColor()
                 )
                 Text(
-                    text = "অপেক্ষমাণ অফলাইন এন্ট্রি: ${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)} টি\nলোকাল অফলাইন ক্যাশ: ১০০ MB সক্রিয়",
+                    text = "অপেক্ষমাণ অফলাইন এন্ট্রি: ${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)} টি\nলোকাল অফলাইন ক্যাশ: $storageLimitLabel সক্রিয়",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                OutlinedButton(
+                    onClick = onOpenStorageSettings,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("sync_dialog_open_storage_button")
+                ) {
+                    Icon(Icons.Default.Storage, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("স্টোরেজ সীমা পরিবর্তন করুন ($storageLimitLabel)")
+                }
                 if (syncStatus.isCloudAuthenticated) {
                     Button(
                         onClick = {
@@ -932,7 +1039,7 @@ private fun OfflineCloudSyncDialog(
                     }
                 } else {
                     Text(
-                        text = "মাঠ পর্যায়ে অফলাইন এন্ট্রি নেট পেলেই ক্লাউডে অটো সিঙ্ক করতে Google সাইন-ইন করুন:",
+                        text = "Google লগইন করলে Firestore অফলাইন ক্যাশ চালু থাকবে — নেট ছাড়াও এন্ট্রি করা যাবে এবং নেট এলে অটো সিঙ্ক হবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1976,7 +2083,12 @@ fun shareAppDownloadLink(context: Context, orgName: String, url: String) {
     }
 }
 
-fun generateBackupJson(members: List<Any>, savings: List<Any>, loans: List<Any>, ledger: List<Any>): String {
+fun generateBackupJson(
+    members: List<Member>,
+    savings: List<SavingsRecord>,
+    loans: List<Loan>,
+    ledger: List<FundLedgerEntry>
+): String {
     val root = JSONObject()
     root.put("organization", "যাদবপুর যুব সমাজ সমিতি")
     root.put("membersCount", members.size)
@@ -1984,5 +2096,71 @@ fun generateBackupJson(members: List<Any>, savings: List<Any>, loans: List<Any>,
     root.put("loansCount", loans.size)
     root.put("ledgerCount", ledger.size)
     root.put("exportDate", BengaliUtils.getCurrentDateStr())
+
+    val membersArr = JSONArray()
+    members.forEach { m ->
+        membersArr.put(
+            JSONObject().apply {
+                put("id", m.id)
+                put("memberSerial", m.memberSerial)
+                put("name", m.name)
+                put("mobile", m.mobile)
+                put("area", m.area)
+                put("weeklySavingsAmount", m.weeklySavingsAmount)
+                put("isActive", m.isActive)
+            }
+        )
+    }
+    root.put("members", membersArr)
+
+    val savingsArr = JSONArray()
+    savings.forEach { s ->
+        savingsArr.put(
+            JSONObject().apply {
+                put("id", s.id)
+                put("memberId", s.memberId)
+                put("memberName", s.memberName)
+                put("collectionDate", s.collectionDate)
+                put("amount", s.amount)
+                put("status", s.status)
+            }
+        )
+    }
+    root.put("savings", savingsArr)
+
+    val loansArr = JSONArray()
+    loans.forEach { l ->
+        loansArr.put(
+            JSONObject().apply {
+                put("id", l.id)
+                put("memberId", l.memberId)
+                put("memberName", l.memberName)
+                put("loanDate", l.loanDate)
+                put("principal", l.principal)
+                put("totalPayable", l.totalPayable)
+                put("totalPaid", l.totalPaid)
+                put("remainingLoan", l.remainingLoan)
+                put("status", l.status)
+            }
+        )
+    }
+    root.put("loans", loansArr)
+
+    val ledgerArr = JSONArray()
+    ledger.forEach { e ->
+        ledgerArr.put(
+            JSONObject().apply {
+                put("id", e.id)
+                put("date", e.date)
+                put("description", e.description)
+                put("moneyIn", e.moneyIn)
+                put("moneyOut", e.moneyOut)
+                put("balance", e.balance)
+                put("type", e.type)
+            }
+        )
+    }
+    root.put("ledger", ledgerArr)
+
     return root.toString(2)
 }
