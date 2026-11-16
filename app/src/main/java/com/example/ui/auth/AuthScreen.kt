@@ -2,6 +2,7 @@ package com.example.ui.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -27,18 +28,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.GetCredentialProviderConfigurationException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.example.ui.theme.*
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -349,6 +358,22 @@ fun GoogleSignInButton(
     }
 }
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+private suspend fun signInWithGoogleCredential(credential: Credential) {
+    if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+        val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+        val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+        Firebase.auth.signInWithCredential(authCredential).await()
+    } else {
+        throw IllegalStateException("অপ্রত্যাশিত ক্রেডেনশিয়াল টাইপ পাওয়া গেছে")
+    }
+}
+
 fun onGoogleSignInClicked(
     context: Context,
     credentialManager: CredentialManager,
@@ -360,30 +385,79 @@ fun onGoogleSignInClicked(
     val clientId = try {
         context.getString(R.string.default_web_client_id)
     } catch (_: Exception) {
-        onAuthError("Google Sign-In কনফিগারেশন পাওয়া যায়নি")
+        onAuthError("Google Sign-In কনফিগারেশন পাওয়া যায়নি (default_web_client_id অনুপস্থিত)")
+        return
+    }
+
+    if (clientId.isBlank() || clientId.contains("ciplaceholder", ignoreCase = true)) {
+        onAuthError(
+            "এই APK-টি আসল Firebase google-services.json ছাড়া তৈরি হয়েছে। " +
+                "Google Sign-In চালু করতে আসল google-services.json সহ নতুন APK বিল্ড করুন।"
+        )
+        return
+    }
+
+    val activity = context.findActivity()
+    if (activity == null) {
+        onAuthError("Google Sign-In চালু করার জন্য সক্রিয় স্ক্রিন (Activity) পাওয়া যায়নি")
         return
     }
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
-    val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+    val primaryRequest = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
 
     scope.launch {
         try {
-            val activity = context as? Activity
-                ?: throw IllegalStateException("Google Sign-In এর জন্য Activity প্রয়োজন")
-            val result = credentialManager.getCredential(activity, request)
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                Firebase.auth.signInWithCredential(authCredential).await()
-                onAuthSuccess()
-            } else {
-                onAuthError("অপ্রত্যাশিত ক্রেডেনশিয়াল টাইপ")
+            val result = try {
+                credentialManager.getCredential(activity, primaryRequest)
+            } catch (primaryErr: Exception) {
+                if (primaryErr is NoCredentialException ||
+                    primaryErr is GetCredentialUnsupportedException ||
+                    primaryErr is GetCredentialProviderConfigurationException
+                ) {
+                    Log.w("Auth", "Primary GetSignInWithGoogleOption failed, trying GetGoogleIdOption fallback", primaryErr)
+                    val fallbackOption = GetGoogleIdOption.Builder()
+                        .setFilterByAuthorizedAccounts(false)
+                        .setServerClientId(clientId)
+                        .setAutoSelectEnabled(false)
+                        .build()
+                    val fallbackRequest = GetCredentialRequest.Builder()
+                        .addCredentialOption(fallbackOption)
+                        .build()
+                    credentialManager.getCredential(activity, fallbackRequest)
+                } else {
+                    throw primaryErr
+                }
             }
+
+            signInWithGoogleCredential(result.credential)
+            onAuthSuccess()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: GetCredentialCancellationException) {
             Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
-            onAuthCancelled()
+            val msgLower = e.message.orEmpty().lowercase()
+            if (msgLower.contains("whitelist") || msgLower.contains("developer") || msgLower.contains("sha")) {
+                onAuthError("Google সাইন-ইন অনুমোদিত নয় (${e.message})")
+            } else {
+                onAuthCancelled()
+            }
+        } catch (e: NoCredentialException) {
+            Log.w("Auth", "No Google credentials available", e)
+            onAuthError(
+                "ফোনে কোনো Google অ্যাকাউন্ট লগইন করা নেই বা Google Play Services আপডেট করা প্রয়োজন।"
+            )
+        } catch (e: GetCredentialProviderConfigurationException) {
+            Log.e("Auth", "Credential provider misconfigured", e)
+            onAuthError("Google Play Services বা Firebase SHA-1 কনফিগারেশন পাওয়া যায়নি (${e.errorMessage ?: e.localizedMessage ?: "error"})")
+        } catch (e: GetCredentialException) {
+            Log.e("Auth", "CredentialManager error", e)
+            onAuthError(
+                "Google সাইন-ইন সম্পন্ন করা যায়নি: ${e.errorMessage ?: e.localizedMessage ?: "অনুগ্রহ করে আবার চেষ্টা করুন"}"
+            )
+        } catch (e: FirebaseAuthException) {
+            Log.e("Auth", "Firebase auth exchange failed: ${e.errorCode}", e)
+            onAuthError("Firebase লগইন ব্যর্থ (${e.errorCode}): ${e.localizedMessage ?: "আবার চেষ্টা করুন"}")
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed", e)
             onAuthError(e.localizedMessage ?: "Google সাইন-ইন ব্যর্থ হয়েছে")

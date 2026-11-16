@@ -1240,6 +1240,7 @@ fun OfflineCloudSyncDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    var authErrorMessage by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("অফলাইন ক্যাশ ও ক্লাউড সিঙ্ক", fontWeight = FontWeight.Bold) },
@@ -1294,12 +1295,30 @@ fun OfflineCloudSyncDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (!authErrorMessage.isNullOrBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("cloud_sync_auth_error_box")
+                        ) {
+                            Text(
+                                text = authErrorMessage ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
                     GoogleSignInButton(
                         label = "Google দিয়ে ক্লাউড সিঙ্ক চালু করুন",
                         onAuthSuccess = {
+                            authErrorMessage = null
                             Toast.makeText(context, "ক্লাউড সিঙ্ক ও Firestore অফলাইন ক্যাশ চালু হয়েছে!", Toast.LENGTH_LONG).show()
                         },
                         onAuthError = { msg ->
+                            authErrorMessage = msg
                             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     )

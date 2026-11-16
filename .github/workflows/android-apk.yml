@@ -140,7 +140,11 @@ jobs:
           if [ -n "$APK_FILE" ]; then
             cp "$APK_FILE" Ekota-Samiti.apk
             TAG="v1.0.${{ github.run_number }}"
-            gh release create "$TAG" Ekota-Samiti.apk \
-              --title "Ekota Samiti $TAG" \
-              --notes "Version Code $((GITHUB_RUN_NUMBER + 10)) — Direct in-place update without uninstalling."
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" Ekota-Samiti.apk --clobber
+            else
+              gh release create "$TAG" Ekota-Samiti.apk \
+                --title "Ekota Samiti $TAG" \
+                --notes "Version Code $((GITHUB_RUN_NUMBER + 10)) — Direct in-place update without uninstalling."
+            fi
           fi
