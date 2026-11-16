@@ -38,21 +38,21 @@ private fun bengaliTextStyle(
     platformStyle = PlatformTextStyle(includeFontPadding = true)
 )
 
-// Page-balanced, spacious and smoothly legible Bengali typography hierarchy
+// Page-balanced, larger and smoothly legible Bengali typography hierarchy across all screens
 val BengaliTypography = Typography(
-    displayLarge = bengaliTextStyle(FontWeight.Bold, 28, 36),
-    displayMedium = bengaliTextStyle(FontWeight.Bold, 25, 33),
-    displaySmall = bengaliTextStyle(FontWeight.Bold, 22, 30),
-    headlineLarge = bengaliTextStyle(FontWeight.Bold, 24, 32),
-    headlineMedium = bengaliTextStyle(FontWeight.Bold, 21, 28),
-    headlineSmall = bengaliTextStyle(FontWeight.SemiBold, 19, 26),
-    titleLarge = bengaliTextStyle(FontWeight.Bold, 19, 26),
-    titleMedium = bengaliTextStyle(FontWeight.SemiBold, 17, 24),
-    titleSmall = bengaliTextStyle(FontWeight.SemiBold, 16, 22),
-    bodyLarge = bengaliTextStyle(FontWeight.Normal, 16, 24),
-    bodyMedium = bengaliTextStyle(FontWeight.Normal, 15, 22),
-    bodySmall = bengaliTextStyle(FontWeight.Normal, 14, 20),
-    labelLarge = bengaliTextStyle(FontWeight.SemiBold, 15, 21),
-    labelMedium = bengaliTextStyle(FontWeight.SemiBold, 14, 19),
-    labelSmall = bengaliTextStyle(FontWeight.Medium, 13, 18)
+    displayLarge = bengaliTextStyle(FontWeight.Bold, 30, 38),
+    displayMedium = bengaliTextStyle(FontWeight.Bold, 27, 35),
+    displaySmall = bengaliTextStyle(FontWeight.Bold, 24, 32),
+    headlineLarge = bengaliTextStyle(FontWeight.Bold, 26, 34),
+    headlineMedium = bengaliTextStyle(FontWeight.Bold, 23, 31),
+    headlineSmall = bengaliTextStyle(FontWeight.SemiBold, 21, 29),
+    titleLarge = bengaliTextStyle(FontWeight.Bold, 21, 29),
+    titleMedium = bengaliTextStyle(FontWeight.SemiBold, 19, 26),
+    titleSmall = bengaliTextStyle(FontWeight.SemiBold, 18, 24),
+    bodyLarge = bengaliTextStyle(FontWeight.Normal, 18, 26),
+    bodyMedium = bengaliTextStyle(FontWeight.Normal, 17, 24),
+    bodySmall = bengaliTextStyle(FontWeight.Normal, 15, 22),
+    labelLarge = bengaliTextStyle(FontWeight.SemiBold, 16, 23),
+    labelMedium = bengaliTextStyle(FontWeight.SemiBold, 15, 21),
+    labelSmall = bengaliTextStyle(FontWeight.Medium, 14, 19)
 )

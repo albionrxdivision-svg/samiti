@@ -18,14 +18,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.local.StorageQuotaManager
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.settings.OfflineCloudSyncDialog
+import com.example.ui.settings.StorageSettingsDialog
+import com.example.ui.settings.generateBackupJson
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
@@ -35,18 +40,30 @@ fun DashboardScreen(
     onNavigateToSavings: () -> Unit,
     onNavigateToLoans: () -> Unit,
     onNavigateToMembers: () -> Unit,
+    onNavigateToMemberRegistration: () -> Unit = onNavigateToMembers,
     onNavigateToLedger: () -> Unit,
     onNavigateToApprovals: () -> Unit,
     onNavigateToFines: () -> Unit = {},
     onOpenLogin: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val summary by viewModel.dashboardSummary.collectAsStateWithLifecycle()
     val role by viewModel.userRole.collectAsStateWithLifecycle()
     val userProfile by viewModel.currentUserProfile.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val members by viewModel.members.collectAsStateWithLifecycle()
+    val savingsRecords by viewModel.savingsRecords.collectAsStateWithLifecycle()
+    val loans by viewModel.loans.collectAsStateWithLifecycle()
+    val fundLedger by viewModel.fundLedger.collectAsStateWithLifecycle()
 
     var showAccountLoginDialog by remember { mutableStateOf(false) }
+    var showCloudSyncDialog by remember { mutableStateOf(false) }
+    var showStorageSettingsDialog by remember { mutableStateOf(false) }
+    var configuredStorageLimitBytes by remember {
+        mutableLongStateOf(StorageQuotaManager.getConfiguredLimitBytes(context))
+    }
+    val storageLimitLabel = StorageQuotaManager.formatBytesBn(configuredStorageLimitBytes)
     var syncFeedbackMsg by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
@@ -84,38 +101,71 @@ fun DashboardScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = settings.orgName,
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = Color.White,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = settings.subtitle,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.92f)
+                                color = Color.White.copy(alpha = 0.92f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
 
-                        // Only Login Icon on Dashboard Header
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.White.copy(alpha = 0.18f),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+                        // Top Header Action Icons: Cloud & Offline Sync + Account Login
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
-                                onClick = { showAccountLoginDialog = true },
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("dashboard_login_icon")
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.White.copy(alpha = 0.18f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
                             ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Login,
-                                    contentDescription = "লগইন",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(26.dp)
-                                )
+                                IconButton(
+                                    onClick = { showCloudSyncDialog = true },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("dashboard_cloud_sync_icon")
+                                ) {
+                                    Icon(
+                                        imageVector = when {
+                                            !syncStatus.isOnline -> Icons.Default.CloudOff
+                                            syncStatus.isCloudAuthenticated -> Icons.Default.CloudDone
+                                            else -> Icons.Default.CloudSync
+                                        },
+                                        contentDescription = "ক্লাউড ও অফলাইন সিঙ্ক",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.White.copy(alpha = 0.18f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+                            ) {
+                                IconButton(
+                                    onClick = { showAccountLoginDialog = true },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("dashboard_login_icon")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Login,
+                                        contentDescription = "লগইন",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -581,7 +631,7 @@ fun DashboardScreen(
                     containerColor = CardOrangeGradient.first(),
                     contentColor = Color.White,
                     modifier = Modifier.weight(1f),
-                    onClick = onNavigateToMembers
+                    onClick = if (role == UserRole.ADMIN) onNavigateToMemberRegistration else onNavigateToMembers
                 )
             }
         }
@@ -647,6 +697,32 @@ fun DashboardScreen(
             }
         )
     }
+
+    if (showCloudSyncDialog) {
+        OfflineCloudSyncDialog(
+            syncStatus = syncStatus,
+            storageLimitLabel = storageLimitLabel,
+            onOpenStorageSettings = {
+                showCloudSyncDialog = false
+                showStorageSettingsDialog = true
+            },
+            onTriggerSync = { onResult ->
+                viewModel.triggerManualSync(onResult)
+            },
+            onDismiss = { showCloudSyncDialog = false }
+        )
+    }
+
+    if (showStorageSettingsDialog) {
+        StorageSettingsDialog(
+            canEditQuota = true,
+            backupJsonProvider = { generateBackupJson(members, savingsRecords, loans, fundLedger) },
+            onLimitUpdated = { newLimitBytes ->
+                configuredStorageLimitBytes = newLimitBytes
+            },
+            onDismiss = { showStorageSettingsDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -669,7 +745,7 @@ fun DashboardMetricCard(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .heightIn(min = 108.dp)
+                .heightIn(min = 114.dp)
                 .background(Brush.linearGradient(colors = gradientColors))
                 .padding(horizontal = 12.dp, vertical = 14.dp)
         ) {
@@ -691,8 +767,8 @@ fun DashboardMetricCard(
             ) {
                 Text(
                     text = title,
-                    fontSize = 14.sp,
-                    lineHeight = 19.sp,
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     maxLines = 1,
@@ -702,8 +778,8 @@ fun DashboardMetricCard(
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     text = value,
-                    fontSize = 18.sp,
-                    lineHeight = 24.sp,
+                    fontSize = 20.sp,
+                    lineHeight = 26.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White,
                     maxLines = 1,
@@ -732,7 +808,7 @@ fun QuickActionButton(
             contentColor = contentColor
         ),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-        modifier = modifier.height(74.dp)
+        modifier = modifier.height(78.dp)
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

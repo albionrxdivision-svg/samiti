@@ -33,6 +33,7 @@ import com.example.ui.fines.FineSheetScreen
 import com.example.ui.ledger.DepositLedgerScreen
 import com.example.ui.loans.LoanManagementScreen
 import com.example.ui.members.MemberManagementScreen
+import com.example.ui.members.MemberRegistrationScreen
 import com.example.ui.officers.OfficersManagementScreen
 import com.example.ui.reports.ReportsScreen
 import com.example.ui.savings.WeeklySavingsScreen
@@ -43,6 +44,7 @@ enum class AppDestination(val titleBengali: String, val icon: ImageVector) {
     SAVINGS("সঞ্চয়", Icons.Default.Savings),
     LOANS("ঋণ", Icons.Default.CreditScore),
     MEMBERS("সদস্য", Icons.Default.People),
+    MEMBER_REGISTRATION("সদস্য নিবন্ধন", Icons.Default.PersonAdd),
     LEDGER("লেজার", Icons.Default.AccountBalanceWallet),
     REPORTS("রিপোর্ট", Icons.Default.Assessment),
     FINES("জরিমানা", Icons.Default.ReceiptLong),
@@ -60,6 +62,7 @@ fun MainAppNavigation(
 ) {
     val context = LocalContext.current
     var currentDestination by remember { mutableStateOf(AppDestination.DASHBOARD) }
+    var previousBeforeRegistration by remember { mutableStateOf(AppDestination.MEMBERS) }
     val role by viewModel.userRole.collectAsStateWithLifecycle()
     val pendingNotifications by viewModel.pendingAdminNotifications.collectAsStateWithLifecycle()
     val dispatchedNotificationIds = remember { mutableSetOf<String>() }
@@ -210,6 +213,10 @@ fun MainAppNavigation(
                     onNavigateToSavings = { currentDestination = AppDestination.SAVINGS },
                     onNavigateToLoans = { currentDestination = AppDestination.LOANS },
                     onNavigateToMembers = { currentDestination = AppDestination.MEMBERS },
+                    onNavigateToMemberRegistration = {
+                        previousBeforeRegistration = AppDestination.DASHBOARD
+                        currentDestination = AppDestination.MEMBER_REGISTRATION
+                    },
                     onNavigateToLedger = { currentDestination = AppDestination.LEDGER },
                     onNavigateToApprovals = { currentDestination = AppDestination.APPROVALS },
                     onNavigateToFines = { currentDestination = AppDestination.FINES },
@@ -227,7 +234,16 @@ fun MainAppNavigation(
                 )
                 AppDestination.MEMBERS -> MemberManagementScreen(
                     viewModel = viewModel,
-                    onNavigateBack = { currentDestination = AppDestination.DASHBOARD }
+                    onNavigateBack = { currentDestination = AppDestination.DASHBOARD },
+                    onNavigateToMemberRegistration = {
+                        previousBeforeRegistration = AppDestination.MEMBERS
+                        currentDestination = AppDestination.MEMBER_REGISTRATION
+                    }
+                )
+                AppDestination.MEMBER_REGISTRATION -> MemberRegistrationScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = { currentDestination = previousBeforeRegistration },
+                    onNavigateToMembers = { currentDestination = AppDestination.MEMBERS }
                 )
                 AppDestination.LEDGER -> DepositLedgerScreen(
                     viewModel = viewModel,

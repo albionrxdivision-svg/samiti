@@ -692,27 +692,30 @@ class EkotaRepository(
             .sortedBy { parseSerialOrder(it.memberSerial) }
     }
 
-    suspend fun addMember(member: Member) {
+    suspend fun addMember(member: Member): String {
         val uid = requireUserId()
+        val trimmedName = member.name.trim()
+        require(trimmedName.isNotBlank()) { "সদস্যের নাম খালি রাখা যাবে না" }
         val path = "members"
         val docRef = if (member.id.isNotBlank()) db.collection(path).document(member.id) else db.collection(path).document()
         val payload = mapOf(
-            "memberSerial" to member.memberSerial,
-            "name" to member.name,
-            "mobile" to member.mobile,
-            "address" to member.address,
-            "area" to member.area,
-            "joinDate" to if (member.joinDate.isBlank()) BengaliUtils.getCurrentDateStr() else member.joinDate,
+            "memberSerial" to member.memberSerial.trim(),
+            "name" to trimmedName,
+            "mobile" to member.mobile.trim(),
+            "address" to member.address.trim(),
+            "area" to member.area.trim(),
+            "joinDate" to if (member.joinDate.isBlank()) BengaliUtils.getCurrentDateStr() else member.joinDate.trim(),
             "weeklySavingsAmount" to member.weeklySavingsAmount,
-            "assignedOfficerId" to member.assignedOfficerId,
-            "assignedOfficerName" to member.assignedOfficerName,
+            "assignedOfficerId" to member.assignedOfficerId.trim(),
+            "assignedOfficerName" to member.assignedOfficerName.trim(),
             "isActive" to member.isActive,
             "createdBy" to uid,
             "createdAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
         awaitWriteOfflineSafe(docRef.set(payload), OperationType.CREATE, path)
-        logAudit("CREATE_MEMBER", "members", docRef.id, "", member.name)
+        logAudit("CREATE_MEMBER", "members", docRef.id, "", trimmedName)
+        return docRef.id
     }
 
     suspend fun updateMember(member: Member) {

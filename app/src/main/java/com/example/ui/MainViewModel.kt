@@ -73,6 +73,9 @@ class MainViewModel(
     private val _isSavingLoan = MutableStateFlow(false)
     val isSavingLoan: StateFlow<Boolean> = _isSavingLoan.asStateFlow()
 
+    private val _isSavingMember = MutableStateFlow(false)
+    val isSavingMember: StateFlow<Boolean> = _isSavingMember.asStateFlow()
+
     private val _isCloudSynced = MutableStateFlow(repository.getCurrentUser() != null)
     val isCloudSynced: StateFlow<Boolean> = _isCloudSynced.asStateFlow()
 
@@ -557,6 +560,103 @@ class MainViewModel(
     }
 
     // Member actions
+    fun suggestNextMemberSerial(currentMembers: List<Member> = _members.value): String {
+        val maxSerial = currentMembers.maxOfOrNull { m ->
+            val ascii = m.memberSerial.map { ch ->
+                when (ch) {
+                    '০' -> '0'; '১' -> '1'; '২' -> '2'; '৩' -> '3'; '৪' -> '4'
+                    '৫' -> '5'; '৬' -> '6'; '৭' -> '7'; '৮' -> '8'; '৯' -> '9'
+                    else -> ch
+                }
+            }.joinToString("")
+            ascii.filter { it.isDigit() }.toIntOrNull() ?: 0
+        } ?: 0
+        return (maxSerial + 1).toString()
+    }
+
+    fun registerMember(
+        member: Member,
+        onSuccess: (Member) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (_userRole.value != UserRole.ADMIN) {
+            onError("নতুন সদস্য নিবন্ধন শুধুমাত্র অ্যাডমিন করতে পারবেন")
+            return
+        }
+        val cleanName = member.name.trim()
+        val cleanPhone = member.mobile.trim()
+        val cleanAddress = member.address.trim()
+        val cleanArea = member.area.trim().ifBlank { "যাদবপুর" }
+        val cleanSerial = member.memberSerial.trim().ifBlank { suggestNextMemberSerial() }
+        val cleanJoinDate = member.joinDate.trim().ifBlank { com.example.util.BengaliUtils.getCurrentDateStr() }
+
+        if (cleanName.isBlank()) {
+            onError("অনুগ্রহ করে সদস্যের নাম লিখুন")
+            return
+        }
+        if (cleanPhone.isBlank() || cleanPhone.filter { it.isDigit() }.length < 6) {
+            onError("অনুগ্রহ করে সঠিক মোবাইল নম্বর লিখুন")
+            return
+        }
+        if (cleanAddress.isBlank()) {
+            onError("অনুগ্রহ করে সদস্যের ঠিকানা লিখুন")
+            return
+        }
+        val normalizedSerialDigits = cleanSerial.filter { it.isDigit() }
+        val serialExists = _members.value.any { existing ->
+            existing.memberSerial.trim().equals(cleanSerial, ignoreCase = true) ||
+                (normalizedSerialDigits.isNotBlank() && existing.memberSerial.filter { it.isDigit() } == normalizedSerialDigits)
+        }
+        if (serialExists) {
+            onError("ক্রমিক নং '$cleanSerial' ইতিমধ্যেই নিবন্ধিত আছে। অন্য ক্রমিক নং দিন।")
+            return
+        }
+
+        val generatedId = member.id.ifBlank { "mem_${System.currentTimeMillis()}" }
+        val newMember = member.copy(
+            id = generatedId,
+            memberSerial = cleanSerial,
+            name = cleanName,
+            mobile = cleanPhone,
+            address = cleanAddress,
+            area = cleanArea,
+            joinDate = cleanJoinDate,
+            weeklySavingsAmount = if (member.weeklySavingsAmount > 0.0) member.weeklySavingsAmount else 100.0,
+            createdBy = currentUserId
+        )
+
+        viewModelScope.launch {
+            _isSavingMember.value = true
+            try {
+                if (repository.getCurrentUser() != null) {
+                    repository.addMember(newMember)
+                }
+                val updated = (_members.value + newMember)
+                    .distinctBy { it.id }
+                    .sortedBy {
+                        it.memberSerial.filter { ch -> ch.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
+                    }
+                _members.value = updated
+                _membersUiState.value = UiState.Success(updated)
+                if (repository.getCurrentUser() == null) {
+                    repository.saveLocalMembers(updated)
+                } else {
+                    try {
+                        repository.cacheMembersInRoom(updated)
+                    } catch (_: Exception) {
+                    }
+                }
+                onSuccess(newMember)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.localizedMessage ?: "Firestore-এ সদস্য নিবন্ধন সংরক্ষণ করতে সমস্যা হয়েছে")
+            } finally {
+                _isSavingMember.value = false
+            }
+        }
+    }
+
     fun addMember(member: Member, onSuccess: () -> Unit, onError: (String) -> Unit) {
         val newMember = if (member.id.isBlank()) {
             member.copy(id = "mem_${System.currentTimeMillis()}", createdBy = currentUserId)

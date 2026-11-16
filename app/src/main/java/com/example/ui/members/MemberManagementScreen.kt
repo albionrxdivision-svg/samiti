@@ -32,7 +32,8 @@ import com.example.util.BengaliUtils
 @Composable
 fun MemberManagementScreen(
     viewModel: MainViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onNavigateToMemberRegistration: (() -> Unit)? = null
 ) {
     val members by viewModel.members.collectAsState()
     val role by viewModel.userRole.collectAsState()
@@ -82,21 +83,46 @@ fun MemberManagementScreen(
                         Icon(Icons.Default.ArrowBack, contentDescription = "ফিরে যান")
                     }
                 },
+                actions = {
+                    if (isAdmin) {
+                        IconButton(
+                            onClick = {
+                                if (onNavigateToMemberRegistration != null) {
+                                    onNavigateToMemberRegistration()
+                                } else {
+                                    showAddDialog = true
+                                }
+                            },
+                            modifier = Modifier.testTag("members_register_top_button")
+                        ) {
+                            Icon(Icons.Default.PersonAdd, contentDescription = "সদস্য নিবন্ধন")
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = HeaderSlateNavy,
                     titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
+                    navigationIconContentColor = Color.White,
+                    actionIconContentColor = Color.White
                 )
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = CardBlueGradient.first(),
-                contentColor = Color.White,
-                modifier = Modifier.testTag("add_member_fab")
-            ) {
-                Icon(Icons.Default.PersonAdd, contentDescription = "নতুন সদস্য")
+            if (isAdmin) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (onNavigateToMemberRegistration != null) {
+                            onNavigateToMemberRegistration()
+                        } else {
+                            showAddDialog = true
+                        }
+                    },
+                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = "নতুন সদস্য") },
+                    text = { Text("নতুন সদস্য নিবন্ধন", fontWeight = FontWeight.Bold) },
+                    containerColor = CardBlueGradient.first(),
+                    contentColor = Color.White,
+                    modifier = Modifier.testTag("add_member_fab")
+                )
             }
         }
     ) { paddingValues ->
@@ -136,17 +162,39 @@ fun MemberManagementScreen(
 
             // Member List
             if (filteredMembers.isEmpty()) {
-                Box(
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(32.dp),
-                    contentAlignment = Alignment.Center
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
                     Text(
                         text = "কোনো সদস্য পাওয়া যায়নি",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (isAdmin) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                if (onNavigateToMemberRegistration != null) {
+                                    onNavigateToMemberRegistration()
+                                } else {
+                                    showAddDialog = true
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = EmeraldGreenPrimary,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
+                            Icon(Icons.Default.PersonAdd, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("নতুন সদস্য নিবন্ধন করুন", fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             } else {
                 LazyColumn(

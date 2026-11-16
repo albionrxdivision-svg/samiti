@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.LocalDataStore
 import com.example.data.model.AuthSession
@@ -21,6 +22,7 @@ import com.example.data.model.TransactionStatus
 import com.example.data.model.UserProfile
 import com.example.data.model.UserRole
 import com.example.data.repository.EkotaRepository
+import com.example.data.repository.SyncStatusState
 import com.example.ui.MainViewModel
 import com.example.ui.components.SuccessPopupDialog
 import com.example.ui.loans.LoanCard
@@ -28,6 +30,7 @@ import com.example.ui.savings.MemberSavingsInputCard
 import com.example.ui.savings.SingleMemberSavingsDepositForm
 import com.example.data.local.StorageQuotaManager
 import com.example.ui.auth.AuthScreen
+import com.example.ui.members.MemberRegistrationContent
 import com.example.ui.settings.SettingsScreen
 import com.example.ui.settings.StorageSettingsDialog
 import com.example.ui.theme.EkotaSamitiTheme
@@ -429,9 +432,70 @@ class WeeklySubmissionAndUiTest {
         composeTestRule.onNodeWithTag("password_input").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("login_button").performScrollTo().assertIsDisplayed()
 
-        // Admin credentials (Nitai/Nemai) and Cloud Sync section must NOT be shown on Login screen
+        // Admin credentials (Nitai/Nemai), role info banner, and Cloud Sync section must NOT be shown on Login screen
         composeTestRule.onNodeWithText("Nitai", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Nemai", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("অ্যাডমিন আইডি ও পাসওয়ার্ড দিয়ে প্রবেশ করুন", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("মাঠ কর্মকর্তা আইডি ও পাসওয়ার্ড দিয়ে প্রবেশ করুন", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithTag("google_sign_in_button").assertDoesNotExist()
+    }
+
+    @Test
+    fun memberRegistrationScreenValidatesAndSubmitsAdminMemberDetails() {
+        var capturedMember: Member? = null
+
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                MemberRegistrationContent(
+                    isAdmin = true,
+                    suggestedSerial = "12",
+                    areaSuggestions = listOf("যাদবপুর উত্তর", "যাদবপুর দক্ষিণ"),
+                    syncStatus = SyncStatusState(isOnline = true, isCloudAuthenticated = true),
+                    isSaving = false,
+                    onRegisterMember = { member, onOk, _ ->
+                        capturedMember = member
+                        onOk(member.copy(id = "mem_test_12"))
+                    },
+                    onNavigateBack = {},
+                    onNavigateToMembers = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("reg_name_input").performScrollTo().performTextInput("করিম মিয়া")
+        composeTestRule.onNodeWithTag("reg_phone_input").performScrollTo().performTextInput("01711223344")
+        composeTestRule.onNodeWithTag("reg_address_input").performScrollTo().performTextInput("যাদবপুর, ঢাকা")
+        composeTestRule.onNodeWithTag("reg_submit_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+
+        assertNotNull(capturedMember)
+        assertEquals("12", capturedMember?.memberSerial)
+        assertEquals("করিম মিয়া", capturedMember?.name)
+        assertEquals("01711223344", capturedMember?.mobile)
+        assertEquals("যাদবপুর, ঢাকা", capturedMember?.address)
+        composeTestRule.onNodeWithTag("reg_success_dialog").assertIsDisplayed()
+    }
+
+    @Test
+    fun memberRegistrationScreenRestrictsNonAdminAccess() {
+        composeTestRule.setContent {
+            EkotaSamitiTheme(darkTheme = false) {
+                MemberRegistrationContent(
+                    isAdmin = false,
+                    suggestedSerial = "1",
+                    areaSuggestions = emptyList(),
+                    syncStatus = SyncStatusState(isOnline = true, isCloudAuthenticated = true),
+                    isSaving = false,
+                    onRegisterMember = { _, _, _ -> },
+                    onNavigateBack = {},
+                    onNavigateToMembers = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("member_reg_admin_only_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("reg_submit_button").assertDoesNotExist()
     }
 }

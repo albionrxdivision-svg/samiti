@@ -981,7 +981,7 @@ private fun ApkManagementDialog(
 }
 
 @Composable
-private fun OfflineCloudSyncDialog(
+fun OfflineCloudSyncDialog(
     syncStatus: com.example.data.repository.SyncStatusState,
     storageLimitLabel: String,
     onOpenStorageSettings: () -> Unit,
