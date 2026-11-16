@@ -25,6 +25,7 @@ import com.example.data.model.FineType
 import com.example.data.model.LoanStatus
 import com.example.data.model.TransactionStatus
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
@@ -59,15 +60,8 @@ fun ReportsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "প্রতিবেদন ও রিপোর্ট",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = "প্রতিবেদন ও রিপোর্ট",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
@@ -79,13 +73,7 @@ fun ReportsScreen(
                     }) {
                         Icon(Icons.Default.Share, contentDescription = "রিপোর্ট শেয়ার করুন")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
-                )
+                }
             )
         }
     ) { paddingValues ->

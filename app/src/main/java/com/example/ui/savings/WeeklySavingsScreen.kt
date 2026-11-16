@@ -27,6 +27,7 @@ import com.example.data.model.SavingsRecord
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
 import com.example.ui.UiState
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.components.SuccessPopupDialog
 import com.example.ui.members.MemberFormDialog
 import com.example.ui.theme.*
@@ -165,25 +166,9 @@ fun WeeklySavingsScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = settings.currentMonthHeading,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "সদস্য: ${BengaliUtils.toBengaliDigits(activeMembers.size)} জন | মোট আদায়: ${BengaliUtils.formatTaka(grandTotal)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.92f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
+            EkotaCompactTopBar(
+                title = settings.currentMonthHeading,
+                subtitle = "সদস্য: ${BengaliUtils.toBengaliDigits(activeMembers.size)} জন | মোট: ${BengaliUtils.formatTaka(grandTotal)}",
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -238,13 +223,7 @@ fun WeeklySavingsScreen(
                             }
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
-                )
+                }
             )
         },
         bottomBar = {

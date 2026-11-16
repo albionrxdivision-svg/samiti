@@ -6,15 +6,16 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.example.ui.theme.*
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.UserRole
 import com.example.notifications.NotificationHelper
@@ -45,7 +47,7 @@ enum class AppDestination(val titleBengali: String, val icon: ImageVector) {
     LOANS("ঋণ", Icons.Default.CreditScore),
     MEMBERS("সদস্য", Icons.Default.People),
     MEMBER_REGISTRATION("সদস্য নিবন্ধন", Icons.Default.PersonAdd),
-    LEDGER("লেজার", Icons.Default.AccountBalanceWallet),
+    LEDGER("হিসাব", Icons.Default.AccountBalanceWallet),
     REPORTS("রিপোর্ট", Icons.Default.Assessment),
     FINES("জরিমানা", Icons.Default.ReceiptLong),
     APPROVALS("অনুমোদন", Icons.Default.Rule),
@@ -150,52 +152,87 @@ fun MainAppNavigation(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            Column {
-                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.testTag("bottom_nav_bar")
-                ) {
-                    bottomNavItems.forEach { destination ->
-                        val isSelected = currentDestination == destination
-                        val navLabel = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
-                            "অ্যাকাউন্ট"
-                        } else {
-                            destination.titleBengali
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                tonalElevation = 0.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("bottom_nav_bar")
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    HorizontalDivider(
+                        thickness = 1.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .height(54.dp)
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        bottomNavItems.forEach { destination ->
+                            val isSelected = currentDestination == destination
+                            val navLabel = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
+                                "অ্যাকাউন্ট"
+                            } else {
+                                destination.titleBengali
+                            }
+                            val contentColor = if (isSelected) {
+                                HeaderSlateNavy
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .minimumInteractiveComponentSize()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable { currentDestination = destination }
+                                    .testTag("nav_${destination.name.lowercase()}")
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (isSelected) Color(0xFFD2E0F2) else Color.Transparent)
+                                            .padding(horizontal = 12.dp, vertical = 2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
+                                                Icons.Default.AccountCircle
+                                            } else {
+                                                destination.icon
+                                            },
+                                            contentDescription = navLabel,
+                                            tint = contentColor,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(1.dp))
+                                    Text(
+                                        text = navLabel,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 12.sp,
+                                            lineHeight = 14.sp
+                                        ),
+                                        color = contentColor,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = { currentDestination = destination },
-                            icon = {
-                                Icon(
-                                    imageVector = if (destination == AppDestination.SETTINGS && role != UserRole.ADMIN) {
-                                        Icons.Default.AccountCircle
-                                    } else {
-                                        destination.icon
-                                    },
-                                    contentDescription = navLabel
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = navLabel,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = HeaderSlateNavy,
-                                selectedTextColor = HeaderSlateNavy,
-                                indicatorColor = Color(0xFFD2E0F2),
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            modifier = Modifier.testTag("nav_${destination.name.lowercase()}")
-                        )
                     }
                 }
             }

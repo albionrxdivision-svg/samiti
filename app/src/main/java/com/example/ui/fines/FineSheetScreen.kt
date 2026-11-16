@@ -36,6 +36,7 @@ import com.example.data.model.Member
 import com.example.data.model.TransactionStatus
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.savings.TableCell
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
@@ -86,25 +87,9 @@ fun FineSheetScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "জরিমানা শিট (সঞ্চয় ও ঋণ)",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "মোট ধার্য: ${BengaliUtils.formatTaka(totalAssessed)} | বাকি: ${BengaliUtils.formatTaka(totalDue)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.92f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
+            EkotaCompactTopBar(
+                title = "জরিমানা শিট (সঞ্চয় ও ঋণ)",
+                subtitle = "ধার্য: ${BengaliUtils.formatTaka(totalAssessed)} | বাকি: ${BengaliUtils.formatTaka(totalDue)}",
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -120,13 +105,7 @@ fun FineSheetScreen(
                     ) {
                         Icon(Icons.Default.AddCircleOutline, contentDescription = "নতুন জরিমানা যোগ")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
-                )
+                }
             )
         },
         floatingActionButton = {

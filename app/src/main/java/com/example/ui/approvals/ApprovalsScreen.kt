@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.SavingsRecord
 import com.example.data.model.TransactionStatus
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
@@ -46,25 +47,13 @@ fun ApprovalsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "মাঠ কর্মকর্তা লেনদেন অনুমোদন",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = "মাঠ কর্মকর্তা লেনদেন অনুমোদন",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
-                )
+                }
             )
         }
     ) { paddingValues ->

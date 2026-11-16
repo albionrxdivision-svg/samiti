@@ -31,6 +31,7 @@ import com.example.data.model.LoanInstallment
 import com.example.data.model.LoanStatus
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.components.SuccessPopupDialog
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
@@ -84,15 +85,8 @@ fun LoanManagementScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "ঋণ ব্যবস্থাপনা",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = "ঋণ ব্যবস্থাপনা",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
@@ -130,13 +124,7 @@ fun LoanManagementScreen(
                             )
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
-                )
+                }
             )
         },
         floatingActionButton = {

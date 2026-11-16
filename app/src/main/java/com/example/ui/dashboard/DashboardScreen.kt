@@ -31,6 +31,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.settings.OfflineCloudSyncDialog
 import com.example.ui.settings.StorageSettingsDialog
 import com.example.ui.settings.generateBackupJson
+import com.example.ui.settings.openDownloadUrl
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
@@ -57,6 +58,9 @@ fun DashboardScreen(
     val loans by viewModel.loans.collectAsStateWithLifecycle()
     val fundLedger by viewModel.fundLedger.collectAsStateWithLifecycle()
 
+    val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
+    val updateBannerDismissed by viewModel.updateBannerDismissed.collectAsStateWithLifecycle()
+
     var showAccountLoginDialog by remember { mutableStateOf(false) }
     var showCloudSyncDialog by remember { mutableStateOf(false) }
     var showStorageSettingsDialog by remember { mutableStateOf(false) }
@@ -70,15 +74,15 @@ fun DashboardScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(ekotaSilverBackgroundBrush()),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 22.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Header Banner with ONLY Login Icon action on the right
+        // Slim Header Banner with Cloud Sync + Account Login icon buttons
         item {
             Card(
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("dashboard_header_card")
@@ -91,7 +95,7 @@ fun DashboardScreen(
                                 colors = listOf(HeaderSlateNavy, Color(0xFF164E63), EmeraldGreenPrimary)
                             )
                         )
-                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                        .padding(horizontal = 14.dp, vertical = 9.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -101,71 +105,145 @@ fun DashboardScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = settings.orgName,
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
-                                maxLines = 2,
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(1.dp))
                             Text(
                                 text = settings.subtitle,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.92f),
-                                maxLines = 2,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.9f),
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
 
-                        // Top Header Action Icons: Cloud & Offline Sync + Account Login
+                        // Compact Header Action Icons (48dp touch target, sleek 36dp circle)
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.White.copy(alpha = 0.18f),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+                            IconButton(
+                                onClick = { showCloudSyncDialog = true },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("dashboard_cloud_sync_icon")
                             ) {
-                                IconButton(
-                                    onClick = { showCloudSyncDialog = true },
-                                    modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("dashboard_cloud_sync_icon")
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(alpha = 0.18f),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = when {
-                                            !syncStatus.isOnline -> Icons.Default.CloudOff
-                                            syncStatus.isCloudAuthenticated -> Icons.Default.CloudDone
-                                            else -> Icons.Default.CloudSync
-                                        },
-                                        contentDescription = "ক্লাউড ও অফলাইন সিঙ্ক",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            imageVector = when {
+                                                !syncStatus.isOnline -> Icons.Default.CloudOff
+                                                syncStatus.isCloudAuthenticated -> Icons.Default.CloudDone
+                                                else -> Icons.Default.CloudSync
+                                            },
+                                            contentDescription = "ক্লাউড ও অফলাইন সিঙ্ক",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             }
 
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.White.copy(alpha = 0.18f),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+                            IconButton(
+                                onClick = { showAccountLoginDialog = true },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("dashboard_login_icon")
                             ) {
-                                IconButton(
-                                    onClick = { showAccountLoginDialog = true },
-                                    modifier = Modifier
-                                        .minimumInteractiveComponentSize()
-                                        .testTag("dashboard_login_icon")
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color.White.copy(alpha = 0.18f),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Login,
-                                        contentDescription = "লগইন",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Login,
+                                            contentDescription = "লগইন",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Auto-Update Prompt Card when a newer build is released
+        availableUpdate?.let { update ->
+            if (!updateBannerDismissed) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = ekotaBadgeSuccessBg()),
+                        border = BorderStroke(1.dp, EmeraldGreenPrimary.copy(alpha = 0.55f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("dashboard_update_banner")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = "অ্যাপ আপডেট",
+                                tint = EmeraldGreenPrimary,
+                                modifier = Modifier.size(26.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "নতুন আপডেট (${update.latestVersionName})",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ekotaSuccessTextColor()
+                                )
+                                Text(
+                                    text = "আনইন্সটল ছাড়াই সরাসরি আপডেট করুন — সব ডাটা অক্ষুণ্ণ থাকবে।",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Button(
+                                onClick = { openDownloadUrl(context, update.downloadUrl) },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = EmeraldGreenPrimary,
+                                    contentColor = Color.White
+                                ),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("dashboard_update_now_button")
+                            ) {
+                                Text("আপডেট", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                            }
+                            IconButton(
+                                onClick = { viewModel.dismissUpdateBanner() },
+                                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "আপডেট নোটিশ বন্ধ করুন",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                     }
@@ -716,7 +794,12 @@ fun DashboardScreen(
     if (showStorageSettingsDialog) {
         StorageSettingsDialog(
             canEditQuota = true,
-            backupJsonProvider = { generateBackupJson(members, savingsRecords, loans, fundLedger) },
+            backupJsonProvider = { viewModel.exportFullBackupJson() },
+            onRestoreBackupJson = if (role == UserRole.ADMIN) {
+                { json, onOk, onErr -> viewModel.restoreBackupFromJson(json, onOk, onErr) }
+            } else {
+                null
+            },
             onLimitUpdated = { newLimitBytes ->
                 configuredStorageLimitBytes = newLimitBytes
             },

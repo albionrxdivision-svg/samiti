@@ -9,6 +9,7 @@ import com.example.data.local.OfflineSyncStatus
 import com.example.data.local.OfflineTransactionDao
 import com.example.data.local.OfflineTransactionDatabase
 import com.example.data.local.OfflineTransactionType
+import com.example.data.local.ParsedBackupData
 import com.example.data.local.PendingOfflineTransactionEntity
 import com.example.data.model.*
 import com.example.util.BengaliUtils
@@ -231,6 +232,7 @@ class EkotaRepository(
     fun saveLocalAppSettings(settings: AppSettings) { localStore?.saveAppSettings(settings) }
     fun loadLocalAdminNotifications(): List<AdminNotification> = localStore?.loadAdminNotifications() ?: emptyList()
     fun saveLocalAdminNotifications(list: List<AdminNotification>) { localStore?.saveAdminNotifications(list) }
+    fun mergeRestoredLocalBackup(data: ParsedBackupData) { localStore?.mergeRestoredBackup(data) }
     fun clearAllLocalData() { localStore?.clearAllData() }
 
     // -------------------------------------------------------------
@@ -1471,6 +1473,10 @@ class EkotaRepository(
             "currentMonthHeading" to settings.currentMonthHeading,
             "interestRatePercent" to settings.interestRatePercent,
             "appDownloadUrl" to settings.appDownloadUrl,
+            "latestVersionCode" to settings.latestVersionCode,
+            "latestVersionName" to settings.latestVersionName,
+            "updateNotes" to settings.updateNotes,
+            "githubRepoSlug" to settings.githubRepoSlug,
             "updatedBy" to uid,
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -1574,165 +1580,111 @@ class EkotaRepository(
         val uid = auth.currentUser?.uid ?: return 0
         val store = localStore ?: return 0
 
-        val members = store.loadMembers()
-        val savings = store.loadSavings()
-        val installments = store.loadLoanInstallments()
-        val fines = store.loadFines()
-        val periods = if (isAdmin) store.loadCollectionPeriods() else emptyList()
-        val loans = if (isAdmin) store.loadLoans() else emptyList()
-        val ledger = if (isAdmin) store.loadFundLedger() else emptyList()
+        val localSettings = store.loadAppSettings()
+        val hasCustomSettings = isAdmin && localSettings != AppSettings()
 
-        val totalCount = members.size + savings.size + installments.size + fines.size + periods.size + loans.size + ledger.size
+        val data = ParsedBackupData(
+            members = store.loadMembers(),
+            savings = store.loadSavings(),
+            collectionPeriods = if (isAdmin) store.loadCollectionPeriods() else emptyList(),
+            loans = if (isAdmin) store.loadLoans() else emptyList(),
+            loanInstallments = store.loadLoanInstallments(),
+            fines = store.loadFines(),
+            fundLedger = if (isAdmin) store.loadFundLedger() else emptyList(),
+            appSettings = if (hasCustomSettings) localSettings else null
+        )
+
+        val totalCount = data.totalRecordsCount + if (hasCustomSettings) 1 else 0
         if (totalCount == 0) return 0
 
-        val batch = db.batch()
-        members.forEach { m ->
+        writeBackupDataToFirestore(data = data, uid = uid, includeAdminCollections = isAdmin, auditPath = "local_migration")
+        store.clearMigratedKeys(includeAdminKeys = isAdmin)
+        return totalCount
+    }
+
+    suspend fun restoreBackupToCloud(data: ParsedBackupData, isAdmin: Boolean): Int {
+        val uid = auth.currentUser?.uid ?: return 0
+        val total = writeBackupDataToFirestore(data = data, uid = uid, includeAdminCollections = isAdmin, auditPath = "backup_restore")
+        logAudit("RESTORE_BACKUP", "system", "all", "", "ব্যাকআপ ফাইল থেকে $total টি রেকর্ড রিস্টোর করা হয়েছে")
+        return total
+    }
+
+    private suspend fun writeBackupDataToFirestore(
+        data: ParsedBackupData,
+        uid: String,
+        includeAdminCollections: Boolean,
+        auditPath: String
+    ): Int {
+        val ops = mutableListOf<(com.google.firebase.firestore.WriteBatch) -> Unit>()
+
+        data.members.forEach { m ->
             val docRef = if (m.id.isNotBlank()) db.collection("members").document(m.id) else db.collection("members").document()
-            batch.set(
-                docRef,
-                mapOf(
-                    "memberSerial" to m.memberSerial,
-                    "name" to m.name,
-                    "mobile" to m.mobile,
-                    "address" to m.address,
-                    "area" to m.area,
-                    "joinDate" to m.joinDate,
-                    "weeklySavingsAmount" to m.weeklySavingsAmount,
-                    "assignedOfficerId" to m.assignedOfficerId,
-                    "assignedOfficerName" to m.assignedOfficerName,
-                    "isActive" to m.isActive,
-                    "createdBy" to m.createdBy.ifBlank { uid },
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                ),
-                SetOptions.merge()
-            )
-        }
-
-        savings.forEach { s ->
-            val docId = s.id.ifBlank { "${s.memberId}_${s.collectionDate.replace("/", "-")}" }
-            batch.set(
-                db.collection("savings").document(docId),
-                mapOf(
-                    "memberId" to s.memberId,
-                    "memberName" to s.memberName,
-                    "memberSerial" to s.memberSerial,
-                    "collectionDate" to s.collectionDate,
-                    "amount" to s.amount,
-                    "isPaid" to s.isPaid,
-                    "officerId" to s.officerId.ifBlank { uid },
-                    "officerName" to s.officerName,
-                    "status" to s.status,
-                    "createdBy" to s.createdBy.ifBlank { uid },
-                    "approvedBy" to s.approvedBy,
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                ),
-                SetOptions.merge()
-            )
-        }
-
-        installments.forEach { inst ->
-            val docRef = if (inst.id.isNotBlank()) db.collection("loanInstallments").document(inst.id) else db.collection("loanInstallments").document()
-            batch.set(
-                docRef,
-                mapOf(
-                    "loanId" to inst.loanId,
-                    "memberId" to inst.memberId,
-                    "memberName" to inst.memberName,
-                    "serialNumber" to inst.serialNumber,
-                    "installmentDate" to inst.installmentDate,
-                    "amount" to inst.amount,
-                    "isMissed" to inst.isMissed,
-                    "officerId" to inst.officerId.ifBlank { uid },
-                    "status" to inst.status,
-                    "createdBy" to inst.createdBy.ifBlank { uid },
-                    "approvedBy" to inst.approvedBy,
-                    "createdAt" to FieldValue.serverTimestamp()
-                ),
-                SetOptions.merge()
-            )
-        }
-
-        fines.forEach { f ->
-            val docRef = if (f.id.isNotBlank()) db.collection("fines").document(f.id) else db.collection("fines").document()
-            batch.set(
-                docRef,
-                mapOf(
-                    "memberId" to f.memberId,
-                    "memberName" to f.memberName,
-                    "memberSerial" to f.memberSerial,
-                    "fineDate" to f.fineDate,
-                    "missedDate" to f.missedDate,
-                    "fineType" to f.fineType,
-                    "amount" to f.amount,
-                    "isPaid" to f.isPaid,
-                    "paidDate" to f.paidDate,
-                    "referenceId" to f.referenceId,
-                    "officerId" to f.officerId.ifBlank { uid },
-                    "officerName" to f.officerName,
-                    "status" to f.status,
-                    "createdBy" to f.createdBy.ifBlank { uid },
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                ),
-                SetOptions.merge()
-            )
-        }
-
-        if (isAdmin) {
-            periods.forEach { p ->
-                val docRef = if (p.id.isNotBlank()) db.collection("collectionPeriods").document(p.id) else db.collection("collectionPeriods").document()
+            ops.add { batch ->
                 batch.set(
                     docRef,
                     mapOf(
-                        "dateStr" to p.dateStr,
-                        "monthYear" to p.monthYear,
-                        "isClosed" to p.isClosed,
-                        "totalSavings" to p.totalSavings,
-                        "createdAt" to FieldValue.serverTimestamp()
-                    ),
-                    SetOptions.merge()
-                )
-            }
-            loans.forEach { l ->
-                val docRef = if (l.id.isNotBlank()) db.collection("loans").document(l.id) else db.collection("loans").document()
-                batch.set(
-                    docRef,
-                    mapOf(
-                        "memberId" to l.memberId,
-                        "memberName" to l.memberName,
-                        "memberSerial" to l.memberSerial,
-                        "loanDate" to l.loanDate,
-                        "principal" to l.principal,
-                        "interest" to l.interest,
-                        "totalPayable" to l.totalPayable,
-                        "weeklyInstallment" to l.weeklyInstallment,
-                        "totalPaid" to l.totalPaid,
-                        "remainingLoan" to l.remainingLoan,
-                        "nextInstallmentDate" to l.nextInstallmentDate,
-                        "missedInstallments" to l.missedInstallments,
-                        "status" to l.status,
-                        "createdBy" to l.createdBy.ifBlank { uid },
+                        "memberSerial" to m.memberSerial,
+                        "name" to m.name,
+                        "mobile" to m.mobile,
+                        "address" to m.address,
+                        "area" to m.area,
+                        "joinDate" to m.joinDate,
+                        "weeklySavingsAmount" to m.weeklySavingsAmount,
+                        "assignedOfficerId" to m.assignedOfficerId,
+                        "assignedOfficerName" to m.assignedOfficerName,
+                        "isActive" to m.isActive,
+                        "createdBy" to m.createdBy.ifBlank { uid },
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     ),
                     SetOptions.merge()
                 )
             }
-            ledger.forEach { e ->
-                val docRef = if (e.id.isNotBlank()) db.collection("fundLedger").document(e.id) else db.collection("fundLedger").document()
+        }
+
+        data.savings.forEach { s ->
+            val docId = s.id.ifBlank { "${s.memberId}_${s.collectionDate.replace("/", "-")}" }
+            ops.add { batch ->
+                batch.set(
+                    db.collection("savings").document(docId),
+                    mapOf(
+                        "memberId" to s.memberId,
+                        "memberName" to s.memberName,
+                        "memberSerial" to s.memberSerial,
+                        "collectionDate" to s.collectionDate,
+                        "amount" to s.amount,
+                        "isPaid" to s.isPaid,
+                        "officerId" to s.officerId.ifBlank { uid },
+                        "officerName" to s.officerName,
+                        "status" to s.status,
+                        "createdBy" to s.createdBy.ifBlank { uid },
+                        "approvedBy" to s.approvedBy,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                )
+            }
+        }
+
+        data.loanInstallments.forEach { inst ->
+            val docRef = if (inst.id.isNotBlank()) db.collection("loanInstallments").document(inst.id) else db.collection("loanInstallments").document()
+            ops.add { batch ->
                 batch.set(
                     docRef,
                     mapOf(
-                        "date" to e.date,
-                        "description" to e.description,
-                        "moneyIn" to e.moneyIn,
-                        "moneyOut" to e.moneyOut,
-                        "balance" to e.balance,
-                        "referenceId" to e.referenceId,
-                        "type" to e.type,
-                        "createdBy" to e.createdBy.ifBlank { uid },
+                        "loanId" to inst.loanId,
+                        "memberId" to inst.memberId,
+                        "memberName" to inst.memberName,
+                        "serialNumber" to inst.serialNumber,
+                        "installmentDate" to inst.installmentDate,
+                        "amount" to inst.amount,
+                        "isMissed" to inst.isMissed,
+                        "officerId" to inst.officerId.ifBlank { uid },
+                        "officerName" to inst.officerName,
+                        "status" to inst.status,
+                        "createdBy" to inst.createdBy.ifBlank { uid },
+                        "approvedBy" to inst.approvedBy,
                         "createdAt" to FieldValue.serverTimestamp()
                     ),
                     SetOptions.merge()
@@ -1740,9 +1692,128 @@ class EkotaRepository(
             }
         }
 
-        awaitWriteOfflineSafe(batch.commit(), OperationType.WRITE, "local_migration")
-        store.clearMigratedKeys(includeAdminKeys = isAdmin)
-        return totalCount
+        data.fines.forEach { f ->
+            val docRef = if (f.id.isNotBlank()) db.collection("fines").document(f.id) else db.collection("fines").document()
+            ops.add { batch ->
+                batch.set(
+                    docRef,
+                    mapOf(
+                        "memberId" to f.memberId,
+                        "memberName" to f.memberName,
+                        "memberSerial" to f.memberSerial,
+                        "fineDate" to f.fineDate,
+                        "missedDate" to f.missedDate,
+                        "fineType" to f.fineType,
+                        "amount" to f.amount,
+                        "isPaid" to f.isPaid,
+                        "paidDate" to f.paidDate,
+                        "referenceId" to f.referenceId,
+                        "officerId" to f.officerId.ifBlank { uid },
+                        "officerName" to f.officerName,
+                        "status" to f.status,
+                        "createdBy" to f.createdBy.ifBlank { uid },
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                )
+            }
+        }
+
+        if (includeAdminCollections) {
+            data.collectionPeriods.forEach { p ->
+                val docRef = if (p.id.isNotBlank()) db.collection("collectionPeriods").document(p.id) else db.collection("collectionPeriods").document()
+                ops.add { batch ->
+                    batch.set(
+                        docRef,
+                        mapOf(
+                            "dateStr" to p.dateStr,
+                            "monthYear" to p.monthYear,
+                            "isClosed" to p.isClosed,
+                            "totalSavings" to p.totalSavings,
+                            "createdAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    )
+                }
+            }
+            data.loans.forEach { l ->
+                val docRef = if (l.id.isNotBlank()) db.collection("loans").document(l.id) else db.collection("loans").document()
+                ops.add { batch ->
+                    batch.set(
+                        docRef,
+                        mapOf(
+                            "memberId" to l.memberId,
+                            "memberName" to l.memberName,
+                            "memberSerial" to l.memberSerial,
+                            "loanDate" to l.loanDate,
+                            "principal" to l.principal,
+                            "interest" to l.interest,
+                            "totalPayable" to l.totalPayable,
+                            "weeklyInstallment" to l.weeklyInstallment,
+                            "totalPaid" to l.totalPaid,
+                            "remainingLoan" to l.remainingLoan,
+                            "nextInstallmentDate" to l.nextInstallmentDate,
+                            "missedInstallments" to l.missedInstallments,
+                            "status" to l.status,
+                            "createdBy" to l.createdBy.ifBlank { uid },
+                            "createdAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    )
+                }
+            }
+            data.fundLedger.forEach { e ->
+                val docRef = if (e.id.isNotBlank()) db.collection("fundLedger").document(e.id) else db.collection("fundLedger").document()
+                ops.add { batch ->
+                    batch.set(
+                        docRef,
+                        mapOf(
+                            "date" to e.date,
+                            "description" to e.description,
+                            "moneyIn" to e.moneyIn,
+                            "moneyOut" to e.moneyOut,
+                            "balance" to e.balance,
+                            "referenceId" to e.referenceId,
+                            "type" to e.type,
+                            "createdBy" to e.createdBy.ifBlank { uid },
+                            "createdAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    )
+                }
+            }
+            data.appSettings?.let { s ->
+                ops.add { batch ->
+                    batch.set(
+                        db.collection("appSettings").document("main"),
+                        mapOf(
+                            "orgName" to s.orgName,
+                            "subtitle" to s.subtitle,
+                            "currency" to s.currency,
+                            "currentMonthHeading" to s.currentMonthHeading,
+                            "interestRatePercent" to s.interestRatePercent,
+                            "appDownloadUrl" to s.appDownloadUrl,
+                            "latestVersionCode" to s.latestVersionCode,
+                            "latestVersionName" to s.latestVersionName,
+                            "updateNotes" to s.updateNotes,
+                            "githubRepoSlug" to s.githubRepoSlug,
+                            "updatedBy" to uid,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    )
+                }
+            }
+        }
+
+        ops.chunked(400).forEach { chunk ->
+            val batch = db.batch()
+            chunk.forEach { applyOp -> applyOp(batch) }
+            awaitWriteOfflineSafe(batch.commit(), OperationType.WRITE, auditPath)
+        }
+        return ops.size
     }
 
     // -------------------------------------------------------------

@@ -33,6 +33,7 @@ import com.example.data.model.UserRole
 import com.example.data.repository.SyncStatusState
 import com.example.ui.MainViewModel
 import com.example.ui.auth.GoogleSignInButton
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 import kotlinx.coroutines.launch
@@ -115,25 +116,9 @@ fun MemberRegistrationContent(
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            text = "নতুন সদস্য নিবন্ধন",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "Firestore ডাটাবেসে নতুন সদস্য সংরক্ষণ",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.9f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
+            EkotaCompactTopBar(
+                title = "নতুন সদস্য নিবন্ধন",
+                subtitle = "Firestore ডাটাবেসে নতুন সদস্য সংরক্ষণ",
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -144,12 +129,7 @@ fun MemberRegistrationContent(
                             contentDescription = "ফিরে যান"
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
-                )
+                }
             )
         }
     ) { paddingValues ->

@@ -205,6 +205,10 @@ data class AppSettings(
     val currentMonthHeading: String = "সাপ্তাহিক সঞ্চয়",
     val interestRatePercent: Double = 20.0,
     val appDownloadUrl: String = "",
+    val latestVersionCode: Int = 0,
+    val latestVersionName: String = "",
+    val updateNotes: String = "",
+    val githubRepoSlug: String = "",
     val updatedBy: String = "",
     @ServerTimestamp val updatedAt: Timestamp? = null
 )

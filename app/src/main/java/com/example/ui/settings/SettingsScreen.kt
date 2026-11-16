@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,6 +40,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
 import com.example.data.local.StorageQuotaManager
 import com.example.data.model.AppSettings
 import com.example.data.model.AuthSession
@@ -52,7 +56,9 @@ import com.example.data.model.TransactionStatus
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
 import com.example.ui.auth.GoogleSignInButton
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
+import com.example.util.AppUpdateInfo
 import com.example.util.BengaliUtils
 import com.example.util.PasswordChangeResult
 import com.example.util.PasswordManager
@@ -60,6 +66,9 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,6 +88,8 @@ fun SettingsScreen(
     val fundLedger by viewModel.fundLedger.collectAsState()
     val syncStatus by viewModel.syncStatus.collectAsState()
     val aiCallUiState by viewModel.aiCallUiState.collectAsState()
+    val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
+    val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
 
     var showOrgSettingsDialog by remember { mutableStateOf(false) }
     var showRoleSwitcherDialog by remember { mutableStateOf(false) }
@@ -98,6 +109,56 @@ fun SettingsScreen(
     var showResetDataDialog by remember { mutableStateOf(false) }
     var isResettingData by remember { mutableStateOf(false) }
 
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val json = backupJsonDialog ?: viewModel.exportFullBackupJson()
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(json.toByteArray(Charsets.UTF_8))
+                } ?: error("ফাইল লেখা যায়নি")
+            }.onSuccess {
+                Toast.makeText(
+                    context,
+                    "সম্পূর্ণ ব্যাকআপ ফাইল সংরক্ষিত হয়েছে — আনইন্সটল করলেও নিরাপদ থাকবে!",
+                    Toast.LENGTH_LONG
+                ).show()
+            }.onFailure { err ->
+                Toast.makeText(context, err.localizedMessage ?: "ফাইল এক্সপোর্ট ব্যর্থ হয়েছে", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val importJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val readResult = runCatching {
+                context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    ?: error("ফাইল পড়া যায়নি")
+            }
+            readResult.onSuccess { rawJson ->
+                viewModel.restoreBackupFromJson(
+                    rawJson = rawJson,
+                    onSuccess = { count ->
+                        backupJsonDialog = null
+                        Toast.makeText(
+                            context,
+                            "সফলভাবে ${BengaliUtils.toBengaliDigits(count)}টি রেকর্ড রিস্টোর করা হয়েছে ✓",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    },
+                    onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                    }
+                )
+            }.onFailure { err ->
+                Toast.makeText(context, err.localizedMessage ?: "ফাইল পড়া যায়নি", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     val passwordManager = remember { PasswordManager.forContext(context) }
     val isRealAdmin = AuthSession.currentUserProfile?.role == UserRole.ADMIN.name
     val isAdminView = role == UserRole.ADMIN
@@ -116,25 +177,13 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = if (isAdminView) "সেটিংস ও ব্যাকআপ" else "অ্যাকাউন্ট ও প্রোফাইল",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = if (isAdminView) "সেটিংস ও ব্যাকআপ" else "অ্যাকাউন্ট ও প্রোফাইল",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
-                )
+                }
             )
         }
     ) { paddingValues ->
@@ -185,13 +234,22 @@ fun SettingsScreen(
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                         val savedUrl = settings.appDownloadUrl.trim()
+                        val updateBadge = when {
+                            availableUpdate != null -> "নতুন আপডেট!"
+                            savedUrl.isNotBlank() -> "v${BuildConfig.VERSION_NAME}"
+                            else -> "v${BuildConfig.VERSION_NAME}"
+                        }
                         SettingsListRow(
-                            title = "মোবাইল অ্যাপ ডাউনলোড (APK)",
-                            subtitle = savedUrl.ifBlank { "অ্যাপ ডাউনলোড লিংক সেট বা শেয়ার করুন" },
-                            icon = Icons.Default.PhoneAndroid,
+                            title = "মোবাইল অ্যাপ আপডেট ও ডাউনলোড (APK)",
+                            subtitle = if (availableUpdate != null) {
+                                "নতুন সংস্করণ v${availableUpdate!!.latestVersionName} প্রস্তুত • ওভাররাইট আপডেট সক্রিয়"
+                            } else {
+                                savedUrl.ifBlank { "অটো-আপডেট যাচাই ও APK ডাউনলোড লিংক" }
+                            },
+                            icon = Icons.Default.SystemUpdate,
                             iconTint = CardTealGradient.first(),
-                            trailingBadge = if (savedUrl.isNotBlank()) "লিংক সক্রিয়" else null,
-                            trailingBadgeColor = CardTealGradient.first(),
+                            trailingBadge = updateBadge,
+                            trailingBadgeColor = if (availableUpdate != null) EmeraldGreenPrimary else CardTealGradient.first(),
                             testTagName = "settings_item_apk",
                             onClick = { showApkManageDialog = true }
                         )
@@ -241,7 +299,7 @@ fun SettingsScreen(
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                         SettingsListRow(
                             title = "ডাটা স্টোরেজ ও ব্যাকআপ ভল্ট",
-                            subtitle = "সর্বোচ্চ ১০০ GB পর্যন্ত ডাটা সংরক্ষণ (সক্রিয়: $storageLimitLabel)",
+                            subtitle = "অটো-ব্যাকআপ সক্রিয় • সর্বোচ্চ ১০০ GB ভল্ট ($storageLimitLabel)",
                             icon = Icons.Default.Storage,
                             iconTint = CardTealGradient.first(),
                             trailingBadge = storageLimitLabel,
@@ -251,15 +309,28 @@ fun SettingsScreen(
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                         SettingsListRow(
-                            title = "তথ্য ব্যাকআপ (JSON Backup)",
-                            subtitle = "সদস্য, সঞ্চয়, ঋণ ও লেজারের JSON ব্যাকআপ তৈরি করুন",
+                            title = "সম্পূর্ণ তথ্য ব্যাকআপ (JSON Export)",
+                            subtitle = "আনইন্সটল-নিরাপদ: সকল সদস্য, সঞ্চয়, ঋণ, কিস্তি, জরিমানা ও হিসাব এক্সপোর্ট করুন",
                             icon = Icons.Default.CloudDownload,
                             iconTint = NavyBlueSecondary,
                             testTagName = "settings_item_backup",
                             onClick = {
-                                backupJsonDialog = generateBackupJson(members, savingsRecords, loans, fundLedger)
+                                backupJsonDialog = viewModel.exportFullBackupJson()
                             }
                         )
+                        if (isRealAdmin) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                            SettingsListRow(
+                                title = "ব্যাকআপ থেকে ডাটা রিস্টোর (Restore)",
+                                subtitle = "আনইন্সটলের পর সংরক্ষিত .json ফাইল থেকে সম্পূর্ণ ডাটা ফিরিয়ে আনুন",
+                                icon = Icons.Default.RestorePage,
+                                iconTint = EmeraldGreenPrimary,
+                                testTagName = "settings_item_restore_backup",
+                                onClick = {
+                                    importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                                }
+                            )
+                        }
                         if (isRealAdmin) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                             SettingsListRow(
@@ -394,12 +465,20 @@ fun SettingsScreen(
         ApkManagementDialog(
             settings = settings,
             isAdmin = role == UserRole.ADMIN,
+            availableUpdate = availableUpdate,
+            isCheckingUpdate = isCheckingUpdate,
+            onCheckUpdate = {
+                viewModel.checkForAppUpdates(force = true) { _, msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            },
             onDismiss = { showApkManageDialog = false },
-            onSaveUrl = { normalizedUrl, onDone ->
+            onSaveSettings = { updatedSettings, onDone ->
                 viewModel.updateSettings(
-                    settings.copy(appDownloadUrl = normalizedUrl),
+                    settings = updatedSettings,
                     onSuccess = {
-                        onDone(true, if (normalizedUrl.isBlank()) "ডাউনলোড লিংক মুছে ফেলা হয়েছে" else "অ্যাপ ডাউনলোড লিংক সংরক্ষিত হয়েছে")
+                        viewModel.checkForAppUpdates(force = false)
+                        onDone(true, "অ্যাপ আপডেট ও ডাউনলোড সেটিংস সংরক্ষিত হয়েছে")
                     },
                     onError = { err -> onDone(false, err) }
                 )
@@ -425,7 +504,12 @@ fun SettingsScreen(
     if (showStorageSettingsDialog) {
         StorageSettingsDialog(
             canEditQuota = true,
-            backupJsonProvider = { generateBackupJson(members, savingsRecords, loans, fundLedger) },
+            backupJsonProvider = { viewModel.exportFullBackupJson() },
+            onRestoreBackupJson = if (isRealAdmin) {
+                { json, onOk, onErr -> viewModel.restoreBackupFromJson(json, onOk, onErr) }
+            } else {
+                null
+            },
             onLimitUpdated = { newLimitBytes ->
                 configuredStorageLimitBytes = newLimitBytes
             },
@@ -452,21 +536,39 @@ fun SettingsScreen(
             onDismissRequest = { backupJsonDialog = null },
             title = { Text("ডেটা ব্যাকআপ প্রস্তুত", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("সমিতির সকল সদস্য, সঞ্চয়, ঋণ এবং লেজার ডেটা ব্যাকআপ JSON ফরম্যাটে তৈরি হয়েছে:")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "সমিতির সম্পূর্ণ ডাটা (সদস্য, সঞ্চয়, ঋণ, কিস্তি, জরিমানা, হিসাব ও সেটিংস) JSON ব্যাকআপে তৈরি হয়েছে। ফাইল এক্সপোর্ট করলে অ্যাপ আনইন্সটল করলেও তা ডাউনলোড/ড্রাইভে নিরাপদ থাকবে:",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 190.dp)
+                            .heightIn(max = 150.dp)
                     ) {
                         Text(
-                            text = json.take(600) + if (json.length > 600) "... [truncated]" else "",
+                            text = json.take(550) + if (json.length > 550) "... [truncated]" else "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(8.dp)
                         )
+                    }
+                    Button(
+                        onClick = {
+                            val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                            exportJsonLauncher.launch("ekota_samiti_backup_$stamp.json")
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary, contentColor = Color.White),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("export_full_backup_file_button")
+                    ) {
+                        Icon(Icons.Default.FileUpload, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(".json ফাইল এক্সপোর্ট (ডাউনলোড/ড্রাইভ)", fontWeight = FontWeight.Bold)
                     }
                     OutlinedButton(
                         onClick = {
@@ -474,7 +576,7 @@ fun SettingsScreen(
                                 .onSuccess { saved ->
                                     Toast.makeText(
                                         context,
-                                        "ফোনের স্টোরেজে সেভ হয়েছে (${StorageQuotaManager.formatBytesBn(saved.sizeBytes)})",
+                                        "অ্যাপ ভল্টে সেভ হয়েছে (${StorageQuotaManager.formatBytesBn(saved.sizeBytes)})",
                                         Toast.LENGTH_LONG
                                     ).show()
                                 }
@@ -489,7 +591,22 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.SaveAlt, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("ফোনের স্টোরেজে সেভ করুন ($storageLimitLabel ভল্ট)")
+                        Text("অ্যাপের ভল্টে সেভ করুন ($storageLimitLabel)")
+                    }
+                    if (isRealAdmin) {
+                        OutlinedButton(
+                            onClick = {
+                                importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("restore_from_backup_dialog_button")
+                        ) {
+                            Icon(Icons.Default.RestorePage, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("ব্যাকআপ .json ফাইল থেকে রিস্টোর")
+                        }
                     }
                 }
             },
@@ -847,25 +964,125 @@ private fun RoleSwitcherDialog(
 }
 
 @Composable
-private fun ApkManagementDialog(
+internal fun ApkManagementDialog(
     settings: AppSettings,
     isAdmin: Boolean,
+    availableUpdate: AppUpdateInfo? = null,
+    isCheckingUpdate: Boolean = false,
+    onCheckUpdate: () -> Unit = {},
     onDismiss: () -> Unit,
-    onSaveUrl: (String, (Boolean, String) -> Unit) -> Unit
+    onSaveSettings: (AppSettings, (Boolean, String) -> Unit) -> Unit
 ) {
     val context = LocalContext.current
     val savedUrl = settings.appDownloadUrl.trim()
     var appDownloadUrlInput by remember(settings) { mutableStateOf(settings.appDownloadUrl) }
+    var githubRepoSlugInput by remember(settings) { mutableStateOf(settings.githubRepoSlug) }
+    var latestVersionCodeInput by remember(settings) {
+        mutableStateOf(if (settings.latestVersionCode > 0) settings.latestVersionCode.toString() else "")
+    }
+    var latestVersionNameInput by remember(settings) { mutableStateOf(settings.latestVersionName) }
     var isSaving by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("মোবাইল অ্যাপ ডাউনলোড (APK)", fontWeight = FontWeight.Bold) },
+        title = { Text("অ্যাপ আপডেট ও APK ডাউনলোড", fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "বর্তমান ইনস্টলকৃত সংস্করণ: v${BuildConfig.VERSION_NAME} (কোড ${BengaliUtils.toBengaliDigits(BuildConfig.VERSION_CODE)})",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "নতুন APK সরাসরি পুরানো অ্যাপের ওপর ইন্সটল (Update) হবে — বারবার আনইন্সটল করতে হবে না এবং কোনো ডাটা মুছবে না।",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (availableUpdate != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = EmeraldGreenPrimary.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, EmeraldGreenPrimary.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("apk_dialog_update_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "নতুন আপডেট পাওয়া গেছে: v${availableUpdate.latestVersionName}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = ekotaSuccessTextColor()
+                            )
+                            if (availableUpdate.releaseNotes.isNotBlank()) {
+                                Text(
+                                    text = availableUpdate.releaseNotes,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (availableUpdate.downloadUrl.isNotBlank()) {
+                                Button(
+                                    onClick = { openDownloadUrl(context, availableUpdate.downloadUrl) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EmeraldGreenPrimary,
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("apk_dialog_update_now_button")
+                                ) {
+                                    Icon(Icons.Default.SystemUpdate, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("এখনই আপডেট ডাউনলোড করুন", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onCheckUpdate,
+                    enabled = !isCheckingUpdate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("check_app_update_button")
+                ) {
+                    if (isCheckingUpdate) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isCheckingUpdate) "আপডেট যাচাই হচ্ছে..." else "এখনই আপডেট যাচাই করুন",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
                 if (savedUrl.isNotBlank()) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -904,7 +1121,7 @@ private fun ApkManagementDialog(
                     ) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("ডাউনলোড ও ইন্সটল করুন", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                        Text("APK ডাউনলোড ও আপডেট করুন", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                     }
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -931,7 +1148,7 @@ private fun ApkManagementDialog(
                     }
                 } else {
                     Text(
-                        text = "এখনো মোবাইল অ্যাপ (APK) ডাউনলোড লিংক যুক্ত করা হয়নি। নিচে ডাউনলোড লিংক সংরক্ষণ করুন।",
+                        text = "GitHub রিলিজ বা সরাসরি APK লিংক নিচে সংরক্ষণ করলে অ্যাপ চালু হলেই স্বয়ংক্রিয় আপডেট নোটিশ দেখাবে।",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -943,12 +1160,40 @@ private fun ApkManagementDialog(
                         value = appDownloadUrlInput,
                         onValueChange = { appDownloadUrlInput = it },
                         label = { Text("APK ডাউনলোড লিংক (URL)") },
-                        placeholder = { Text("https://.../ekota-samiti.apk") },
+                        placeholder = { Text("https://github.com/user/repo/releases/latest") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("apk_download_url_input")
                     )
+                    OutlinedTextField(
+                        value = githubRepoSlugInput,
+                        onValueChange = { githubRepoSlugInput = it },
+                        label = { Text("GitHub রেপোজিটরি (ঐচ্ছিক)") },
+                        placeholder = { Text("owner/repo-name") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("apk_github_repo_input")
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = latestVersionCodeInput,
+                            onValueChange = { latestVersionCodeInput = it.filter { ch -> ch.isDigit() } },
+                            label = { Text("ভার্সন কোড") },
+                            placeholder = { Text("${BuildConfig.VERSION_CODE + 1}") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = latestVersionNameInput,
+                            onValueChange = { latestVersionNameInput = it },
+                            label = { Text("ভার্সন নাম") },
+                            placeholder = { Text("1.2") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     Button(
                         onClick = {
                             val normalized = normalizeUrl(appDownloadUrlInput)
@@ -957,7 +1202,13 @@ private fun ApkManagementDialog(
                                 return@Button
                             }
                             isSaving = true
-                            onSaveUrl(normalized ?: "") { ok, msg ->
+                            val updatedSettings = settings.copy(
+                                appDownloadUrl = normalized ?: "",
+                                githubRepoSlug = githubRepoSlugInput.trim(),
+                                latestVersionCode = latestVersionCodeInput.toIntOrNull() ?: 0,
+                                latestVersionName = latestVersionNameInput.trim()
+                            )
+                            onSaveSettings(updatedSettings) { ok, msg ->
                                 isSaving = false
                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             }
@@ -969,7 +1220,7 @@ private fun ApkManagementDialog(
                             .testTag("save_apk_url_button"),
                         colors = ButtonDefaults.buttonColors(containerColor = NavyBlueSecondary, contentColor = Color.White)
                     ) {
-                        Text(if (isSaving) "সংরক্ষণ হচ্ছে..." else "লিংক সংরক্ষণ করুন", fontWeight = FontWeight.Bold)
+                        Text(if (isSaving) "সংরক্ষণ হচ্ছে..." else "সেটিংস সংরক্ষণ করুন", fontWeight = FontWeight.Bold)
                     }
                 }
             }

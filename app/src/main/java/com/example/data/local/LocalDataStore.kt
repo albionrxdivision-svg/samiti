@@ -328,6 +328,10 @@ class LocalDataStore(context: Context) {
                 currentMonthHeading = obj.optString("currentMonthHeading", "সাপ্তাহিক সঞ্চয়"),
                 interestRatePercent = obj.optDouble("interestRatePercent", 20.0),
                 appDownloadUrl = obj.optString("appDownloadUrl", ""),
+                latestVersionCode = obj.optInt("latestVersionCode", 0),
+                latestVersionName = obj.optString("latestVersionName", ""),
+                updateNotes = obj.optString("updateNotes", ""),
+                githubRepoSlug = obj.optString("githubRepoSlug", ""),
                 updatedBy = obj.optString("updatedBy")
             )
         } catch (_: Exception) {
@@ -343,9 +347,59 @@ class LocalDataStore(context: Context) {
             put("currentMonthHeading", settings.currentMonthHeading)
             put("interestRatePercent", settings.interestRatePercent)
             put("appDownloadUrl", settings.appDownloadUrl)
+            put("latestVersionCode", settings.latestVersionCode)
+            put("latestVersionName", settings.latestVersionName)
+            put("updateNotes", settings.updateNotes)
+            put("githubRepoSlug", settings.githubRepoSlug)
             put("updatedBy", settings.updatedBy)
         }
         prefs.edit().putString(KEY_SETTINGS, obj.toString()).apply()
+    }
+
+    fun mergeRestoredBackup(data: ParsedBackupData) {
+        if (data.members.isNotEmpty()) {
+            val merged = (loadMembers() + data.members).distinctBy {
+                it.id.ifBlank { "${it.memberSerial}_${it.name}" }
+            }
+            saveMembers(merged)
+        }
+        if (data.savings.isNotEmpty()) {
+            val merged = (loadSavings() + data.savings).distinctBy {
+                it.id.ifBlank { "${it.memberId}_${it.collectionDate}" }
+            }
+            saveSavings(merged)
+        }
+        if (data.collectionPeriods.isNotEmpty()) {
+            val merged = (loadCollectionPeriods() + data.collectionPeriods).distinctBy {
+                it.id.ifBlank { it.dateStr }
+            }
+            saveCollectionPeriods(merged)
+        }
+        if (data.loans.isNotEmpty()) {
+            val merged = (loadLoans() + data.loans).distinctBy {
+                it.id.ifBlank { "${it.memberId}_${it.loanDate}" }
+            }
+            saveLoans(merged)
+        }
+        if (data.loanInstallments.isNotEmpty()) {
+            val merged = (loadLoanInstallments() + data.loanInstallments).distinctBy {
+                it.id.ifBlank { "${it.loanId}_${it.installmentDate}" }
+            }
+            saveLoanInstallments(merged)
+        }
+        if (data.fines.isNotEmpty()) {
+            val merged = (loadFines() + data.fines).distinctBy {
+                it.id.ifBlank { "${it.memberId}_${it.missedDate}_${it.fineType}" }
+            }
+            saveFines(merged)
+        }
+        if (data.fundLedger.isNotEmpty()) {
+            val merged = (loadFundLedger() + data.fundLedger).distinctBy {
+                it.id.ifBlank { "${it.date}_${it.description}_${it.moneyIn}_${it.moneyOut}" }
+            }
+            saveFundLedger(merged)
+        }
+        data.appSettings?.let { saveAppSettings(it) }
     }
 
     fun loadAdminNotifications(): List<AdminNotification> {

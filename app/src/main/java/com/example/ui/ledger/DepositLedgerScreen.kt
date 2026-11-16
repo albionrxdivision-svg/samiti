@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.FundLedgerEntry
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
@@ -46,25 +47,13 @@ fun DepositLedgerScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "জমার হিসাব ও লেজার",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = "জমার হিসাব ও লেজার",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
-                )
+                }
             )
         },
         floatingActionButton = {

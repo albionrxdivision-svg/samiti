@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +44,7 @@ import java.util.Locale
 fun StorageSettingsDialog(
     canEditQuota: Boolean,
     backupJsonProvider: () -> String,
+    onRestoreBackupJson: ((String, (Int) -> Unit, (String) -> Unit) -> Unit)? = null,
     onLimitUpdated: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -55,12 +58,58 @@ fun StorageSettingsDialog(
         archives = StorageQuotaManager.listBackupArchives(context)
     }
 
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = backupJsonProvider()
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(json.toByteArray(Charsets.UTF_8))
+                }
+                statusNotice = "ফোনের নির্বাচিত ফোল্ডারে ব্যাকআপ ফাইল সেভ হয়েছে ✓"
+                Toast.makeText(context, "ব্যাকআপ ফাইল এক্সপোর্ট সফল হয়েছে", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, e.localizedMessage ?: "ফাইল সেভ করা যায়নি", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val importJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null && onRestoreBackupJson != null) {
+            try {
+                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                    it.readText()
+                }
+                if (raw.isNullOrBlank()) {
+                    Toast.makeText(context, "নির্বাচিত ফাইলটি খালি", Toast.LENGTH_SHORT).show()
+                } else {
+                    onRestoreBackupJson(
+                        raw,
+                        { count ->
+                            refreshStorageState()
+                            statusNotice = "ব্যাকআপ থেকে ${BengaliUtils.toBengaliDigits(count)}টি রেকর্ড রিস্টোর হয়েছে ✓"
+                            Toast.makeText(context, "সফলভাবে ডাটা রিস্টোর হয়েছে!", Toast.LENGTH_LONG).show()
+                        },
+                        { err ->
+                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, e.localizedMessage ?: "ফাইল পড়া যায়নি", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
@@ -70,7 +119,7 @@ fun StorageSettingsDialog(
                 .testTag("storage_settings_dialog")
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Header
+                // Slim Header
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -79,7 +128,7 @@ fun StorageSettingsDialog(
                                 listOf(HeaderSlateNavy, HeaderSlateDeep)
                             )
                         )
-                        .padding(horizontal = 18.dp, vertical = 14.dp)
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -308,10 +357,60 @@ fun StorageSettingsDialog(
                             )
                         }
 
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                                    exportJsonLauncher.launch("ekota_samiti_backup_$stamp.json")
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("export_saf_backup_button")
+                            ) {
+                                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("ডাউনলোডে সেভ", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (onRestoreBackupJson != null) {
+                                OutlinedButton(
+                                    onClick = { importJsonLauncher.launch(arrayOf("application/json", "*/*")) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .testTag("restore_saf_backup_button")
+                                ) {
+                                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("ফাইল রিস্টোর", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+
                         if (archives.isNotEmpty()) {
                             archives.take(5).forEach { fileInfo ->
                                 BackupArchiveItemRow(
                                     fileInfo = fileInfo,
+                                    onRestore = onRestoreBackupJson?.let { restoreFn ->
+                                        {
+                                            val content = StorageQuotaManager.readBackupArchiveContent(context, fileInfo.fileName)
+                                            if (content != null) {
+                                                restoreFn(
+                                                    content,
+                                                    { count ->
+                                                        statusNotice = "${fileInfo.fileName} থেকে ${BengaliUtils.toBengaliDigits(count)}টি রেকর্ড রিস্টোর হয়েছে ✓"
+                                                        Toast.makeText(context, "ব্যাকআপ রিস্টোর সফল হয়েছে", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    { err ->
+                                                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    },
                                     onCopy = {
                                         val content = StorageQuotaManager.readBackupArchiveContent(context, fileInfo.fileName)
                                         if (content != null) {
@@ -437,6 +536,7 @@ private fun StorageOverviewCard(stats: StorageUsageStats) {
 @Composable
 private fun BackupArchiveItemRow(
     fileInfo: LocalBackupFileInfo,
+    onRestore: (() -> Unit)? = null,
     onCopy: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -454,7 +554,7 @@ private fun BackupArchiveItemRow(
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.Description,
@@ -475,6 +575,18 @@ private fun BackupArchiveItemRow(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (onRestore != null) {
+                IconButton(
+                    onClick = onRestore,
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Restore,
+                        contentDescription = "রিস্টোর করুন",
+                        tint = EmeraldGreenPrimary
+                    )
+                }
             }
             IconButton(
                 onClick = onCopy,

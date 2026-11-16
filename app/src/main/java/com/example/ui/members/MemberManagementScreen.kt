@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.Member
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
 
@@ -69,15 +70,8 @@ fun MemberManagementScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "সদস্য ব্যবস্থাপনা (${BengaliUtils.toBengaliDigits(filteredMembers.size)} জন)",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = "সদস্য ব্যবস্থাপনা (${BengaliUtils.toBengaliDigits(filteredMembers.size)} জন)",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "ফিরে যান")
@@ -98,13 +92,7 @@ fun MemberManagementScreen(
                             Icon(Icons.Default.PersonAdd, contentDescription = "সদস্য নিবন্ধন")
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
-                )
+                }
             )
         },
         floatingActionButton = {

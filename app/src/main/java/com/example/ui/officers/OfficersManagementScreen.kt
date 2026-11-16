@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.UserProfile
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -36,25 +37,13 @@ fun OfficersManagementScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "মাঠ কর্মকর্তা ও ব্যবহারকারী",
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+            EkotaCompactTopBar(
+                title = "মাঠ কর্মকর্তা ও ব্যবহারকারী",
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = HeaderSlateNavy,
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White
-                )
+                }
             )
         }
     ) { paddingValues ->

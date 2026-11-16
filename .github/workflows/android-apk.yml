@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -114,7 +114,14 @@ jobs:
           fi
 
       - name: Build Debug APK
-        run: gradle --no-daemon --no-build-cache :app:assembleDebug
+        run: |
+          APP_VER_CODE=$((GITHUB_RUN_NUMBER + 10))
+          APP_VER_NAME="1.0.${GITHUB_RUN_NUMBER}"
+          gradle --no-daemon --no-build-cache \
+            -PappVersionCode="$APP_VER_CODE" \
+            -PappVersionName="$APP_VER_NAME" \
+            -PgithubRepoSlug="${{ github.repository }}" \
+            :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -123,3 +130,17 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub Release APK
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK_FILE=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" Ekota-Samiti.apk
+            TAG="v1.0.${{ github.run_number }}"
+            gh release create "$TAG" Ekota-Samiti.apk \
+              --title "Ekota Samiti $TAG" \
+              --notes "Version Code $((GITHUB_RUN_NUMBER + 10)) — Direct in-place update without uninstalling."
+          fi

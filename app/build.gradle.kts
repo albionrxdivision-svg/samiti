@@ -16,8 +16,18 @@ android {
     applicationId = "com.aistudio.ekotasamiti.jxqp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    val dynamicVersionCode = (project.findProperty("appVersionCode") as? String)?.toIntOrNull()
+      ?: System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(10)
+      ?: 2
+    val dynamicVersionName = (project.findProperty("appVersionName") as? String)?.takeIf { it.isNotBlank() }
+      ?: System.getenv("GITHUB_RUN_NUMBER")?.let { "1.0.$it" }
+      ?: "1.1"
+    val githubRepoSlug = (project.findProperty("githubRepoSlug") as? String)?.takeIf { it.isNotBlank() }
+      ?: System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() }
+      ?: ""
+    versionCode = dynamicVersionCode
+    versionName = dynamicVersionName
+    buildConfigField("String", "GITHUB_REPO_SLUG", "\"${githubRepoSlug.replace("\"", "")}\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

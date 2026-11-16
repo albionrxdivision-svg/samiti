@@ -6,11 +6,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.ai.AiCallAssistantService
 import com.example.ai.AiCallPlanResult
+import com.example.data.local.BackupManager
 import com.example.data.local.OfflineTransactionType
 import com.example.data.local.PendingOfflineTransactionEntity
 import com.example.data.model.*
 import com.example.data.repository.EkotaRepository
 import com.example.data.repository.SyncStatusState
+import com.example.util.AppUpdateChecker
+import com.example.util.AppUpdateInfo
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -171,6 +174,15 @@ class MainViewModel(
     private val _pendingAdminNotifications = MutableStateFlow<List<AdminNotification>>(emptyList())
     val pendingAdminNotifications: StateFlow<List<AdminNotification>> = _pendingAdminNotifications.asStateFlow()
 
+    private val _availableUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    val availableUpdate: StateFlow<AppUpdateInfo?> = _availableUpdate.asStateFlow()
+
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    val isCheckingUpdate: StateFlow<Boolean> = _isCheckingUpdate.asStateFlow()
+
+    private val _updateBannerDismissed = MutableStateFlow(false)
+    val updateBannerDismissed: StateFlow<Boolean> = _updateBannerDismissed.asStateFlow()
+
     val dashboardSummary: StateFlow<DashboardSummary> = combine(
         combine(_members, _savingsRecords, _loans, _loanInstallments, _fundLedger) {
             membersList, savingsList, loanList, installmentsList, ledgerList ->
@@ -256,6 +268,7 @@ class MainViewModel(
             _fundLedger.value = repository.loadLocalFundLedger()
             _appSettings.value = repository.loadLocalAppSettings()
             _pendingAdminNotifications.value = repository.loadLocalAdminNotifications().filter { !it.isRead }
+            checkForAppUpdates(force = false)
             return
         }
 
@@ -415,7 +428,10 @@ class MainViewModel(
                 repository.observeAppSettings()
                     .catch { }
                     .collect { s ->
-                        if (s != null) _appSettings.value = s
+                        if (s != null) {
+                            _appSettings.value = s
+                            checkForAppUpdates(force = false)
+                        }
                     }
             }
 
@@ -2213,6 +2229,109 @@ class MainViewModel(
 
     fun resetAiCallState() {
         _aiCallUiState.value = AiCallUiState.Idle
+    }
+
+    fun dismissUpdateBanner() {
+        _updateBannerDismissed.value = true
+    }
+
+    fun checkForAppUpdates(
+        force: Boolean = false,
+        onResult: (AppUpdateInfo?, String) -> Unit = { _, _ -> }
+    ) {
+        if (_isCheckingUpdate.value && !force) return
+        if (!repository.isOnline()) {
+            if (force) {
+                onResult(null, "আপডেট যাচাই করতে ইন্টারনেট সংযোগ প্রয়োজন")
+            }
+            return
+        }
+        viewModelScope.launch {
+            _isCheckingUpdate.value = true
+            try {
+                val info = AppUpdateChecker.checkForAvailableUpdate(settings = _appSettings.value)
+                _availableUpdate.value = info
+                if (force && info != null) {
+                    _updateBannerDismissed.value = false
+                }
+                if (info != null) {
+                    onResult(info, "নতুন আপডেট পাওয়া গেছে: ${info.latestVersionName}")
+                } else {
+                    onResult(null, "আপনি সর্বশেষ সংস্করণই ব্যবহার করছেন ✓")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (force) {
+                    onResult(null, "আপডেট যাচাই করা যায়নি")
+                }
+            } finally {
+                _isCheckingUpdate.value = false
+            }
+        }
+    }
+
+    fun exportFullBackupJson(): String {
+        return BackupManager.createFullBackupJson(
+            members = _members.value,
+            savings = _savingsRecords.value,
+            collectionPeriods = _collectionPeriods.value,
+            loans = _loans.value,
+            loanInstallments = _loanInstallments.value,
+            fines = _fines.value,
+            ledger = _fundLedger.value,
+            appSettings = _appSettings.value
+        )
+    }
+
+    fun restoreBackupFromJson(
+        rawJson: String,
+        onSuccess: (Int) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        if (_userRole.value != UserRole.ADMIN) {
+            onError("ব্যাকআপ রিস্টোর শুধুমাত্র অ্যাডমিন করতে পারবেন")
+            return
+        }
+        val parsed = BackupManager.parseBackupJson(rawJson).getOrElse { err ->
+            onError(err.message ?: "ব্যাকআপ ফাইল পড়া যায়নি")
+            return
+        }
+        if (parsed.totalRecordsCount == 0 && parsed.appSettings == null) {
+            onError("ব্যাকআপ ফাইলে কোনো সংরক্ষিত রেকর্ড পাওয়া যায়নি")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                if (repository.getCurrentUser() == null) {
+                    repository.mergeRestoredLocalBackup(parsed)
+                    _members.value = repository.loadLocalMembers()
+                    _membersUiState.value = UiState.Success(_members.value)
+                    _savingsRecords.value = repository.loadLocalSavings()
+                    _collectionPeriods.value = repository.loadLocalCollectionPeriods()
+                    _loans.value = repository.loadLocalLoans()
+                    _loanInstallments.value = repository.loadLocalLoanInstallments()
+                    _fines.value = repository.loadLocalFines()
+                    _fundLedger.value = repository.loadLocalFundLedger()
+                    _appSettings.value = repository.loadLocalAppSettings()
+                    onSuccess(parsed.totalRecordsCount)
+                } else {
+                    val count = repository.restoreBackupToCloud(parsed, isAdmin = true)
+                    if (parsed.members.isNotEmpty()) {
+                        repository.cacheMembersInRoom((_members.value + parsed.members).distinctBy { it.id })
+                    }
+                    if (parsed.loans.isNotEmpty()) {
+                        repository.cacheLoansInRoom((_loans.value + parsed.loans).distinctBy { it.id })
+                    }
+                    onSuccess(count)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e.localizedMessage ?: "ব্যাকআপ রিস্টোর করা যায়নি")
+            }
+        }
     }
 }
 
