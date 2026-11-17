@@ -80,38 +80,16 @@ fun MemberManagementScreen(
                 actions = {
                     if (isAdmin) {
                         IconButton(
-                            onClick = {
-                                if (onNavigateToMemberRegistration != null) {
-                                    onNavigateToMemberRegistration()
-                                } else {
-                                    showAddDialog = true
-                                }
-                            },
-                            modifier = Modifier.testTag("members_register_top_button")
+                            onClick = { showAddDialog = true },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("members_register_top_button")
                         ) {
-                            Icon(Icons.Default.PersonAdd, contentDescription = "সদস্য নিবন্ধন")
+                            Icon(Icons.Default.PersonAdd, contentDescription = "সদস্য যোগ করুন")
                         }
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            if (isAdmin) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        if (onNavigateToMemberRegistration != null) {
-                            onNavigateToMemberRegistration()
-                        } else {
-                            showAddDialog = true
-                        }
-                    },
-                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = "নতুন সদস্য") },
-                    text = { Text("নতুন সদস্য নিবন্ধন", fontWeight = FontWeight.Bold) },
-                    containerColor = CardBlueGradient.first(),
-                    contentColor = Color.White,
-                    modifier = Modifier.testTag("add_member_fab")
-                )
-            }
         }
     ) { paddingValues ->
         Column(

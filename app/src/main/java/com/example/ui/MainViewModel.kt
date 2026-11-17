@@ -212,7 +212,12 @@ class MainViewModel(
         val todayLoanCollected = approvedInstallments.filter { it.installmentDate == today }.sumOf { it.amount }
         val totalDue = loanList.filter { it.status == LoanStatus.ACTIVE.name }.sumOf { it.remainingLoan }
 
-        val latestBalance = ledgerList.lastOrNull()?.balance ?: 0.0
+        val latestBalance = com.example.util.DailyAccountCalculator.buildOverview(
+            savingsRecords = savingsList,
+            loanInstallments = installmentsList,
+            loans = loanList,
+            fundLedger = ledgerList
+        ).currentNetBalance
 
         val pendingSavings = savingsList.count { it.status == TransactionStatus.PENDING.name }
         val pendingInst = installmentsList.count { it.status == TransactionStatus.PENDING.name }

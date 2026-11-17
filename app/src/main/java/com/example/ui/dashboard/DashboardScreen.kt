@@ -28,9 +28,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.StorageQuotaManager
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
+import com.example.ui.ledger.AddLedgerEntryDialog
+import com.example.ui.members.MemberFormDialog
 import com.example.ui.settings.OfflineCloudSyncDialog
 import com.example.ui.settings.StorageSettingsDialog
-import com.example.ui.settings.generateBackupJson
 import com.example.ui.settings.openDownloadUrl
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
@@ -53,10 +54,6 @@ fun DashboardScreen(
     val userProfile by viewModel.currentUserProfile.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
-    val members by viewModel.members.collectAsStateWithLifecycle()
-    val savingsRecords by viewModel.savingsRecords.collectAsStateWithLifecycle()
-    val loans by viewModel.loans.collectAsStateWithLifecycle()
-    val fundLedger by viewModel.fundLedger.collectAsStateWithLifecycle()
 
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
     val updateBannerDismissed by viewModel.updateBannerDismissed.collectAsStateWithLifecycle()
@@ -64,25 +61,21 @@ fun DashboardScreen(
     var showAccountLoginDialog by remember { mutableStateOf(false) }
     var showCloudSyncDialog by remember { mutableStateOf(false) }
     var showStorageSettingsDialog by remember { mutableStateOf(false) }
+    var showHeaderAddMenu by remember { mutableStateOf(false) }
+    var showAddMemberDialog by remember { mutableStateOf(false) }
+    var showAddLedgerDialog by remember { mutableStateOf(false) }
     var configuredStorageLimitBytes by remember {
         mutableLongStateOf(StorageQuotaManager.getConfiguredLimitBytes(context))
     }
     val storageLimitLabel = StorageQuotaManager.formatBytesBn(configuredStorageLimitBytes)
     var syncFeedbackMsg by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ekotaSilverBackgroundBrush()),
-        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Slim Header Banner with Cloud Sync + Account Login icon buttons
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            Surface(
+                color = Color.Transparent,
+                shadowElevation = 3.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("dashboard_header_card")
@@ -95,7 +88,7 @@ fun DashboardScreen(
                                 colors = listOf(HeaderSlateNavy, Color(0xFF164E63), EmeraldGreenPrimary)
                             )
                         )
-                        .padding(horizontal = 14.dp, vertical = 9.dp)
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -111,7 +104,6 @@ fun DashboardScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.height(1.dp))
                             Text(
                                 text = settings.subtitle,
                                 style = MaterialTheme.typography.bodySmall,
@@ -121,13 +113,84 @@ fun DashboardScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
 
-                        // Compact Header Action Icons (48dp touch target, sleek 36dp circle)
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(0.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Box {
+                                IconButton(
+                                    onClick = { showHeaderAddMenu = true },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("dashboard_header_add_icon")
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color.White.copy(alpha = 0.22f),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.42f)),
+                                        modifier = Modifier.size(34.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "নতুন যোগ করুন",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                DropdownMenu(
+                                    expanded = showHeaderAddMenu,
+                                    onDismissRequest = { showHeaderAddMenu = false },
+                                    modifier = Modifier.testTag("dashboard_header_add_menu")
+                                ) {
+                                    if (role == UserRole.ADMIN) {
+                                        DropdownMenuItem(
+                                            text = { Text("নতুন সদস্য যোগ", fontWeight = FontWeight.SemiBold) },
+                                            leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null) },
+                                            modifier = Modifier.testTag("header_add_member_item"),
+                                            onClick = {
+                                                showHeaderAddMenu = false
+                                                showAddMemberDialog = true
+                                            }
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text("সঞ্চয় এন্ট্রি", fontWeight = FontWeight.SemiBold) },
+                                        leadingIcon = { Icon(Icons.Default.Savings, contentDescription = null) },
+                                        modifier = Modifier.testTag("header_add_savings_item"),
+                                        onClick = {
+                                            showHeaderAddMenu = false
+                                            onNavigateToSavings()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("ঋণ / কিস্তি", fontWeight = FontWeight.SemiBold) },
+                                        leadingIcon = { Icon(Icons.Default.CreditScore, contentDescription = null) },
+                                        modifier = Modifier.testTag("header_add_loan_item"),
+                                        onClick = {
+                                            showHeaderAddMenu = false
+                                            onNavigateToLoans()
+                                        }
+                                    )
+                                    if (role == UserRole.ADMIN) {
+                                        DropdownMenuItem(
+                                            text = { Text("নতুন হিসাব এন্ট্রি", fontWeight = FontWeight.SemiBold) },
+                                            leadingIcon = { Icon(Icons.Default.AccountBalanceWallet, contentDescription = null) },
+                                            modifier = Modifier.testTag("header_add_ledger_item"),
+                                            onClick = {
+                                                showHeaderAddMenu = false
+                                                showAddLedgerDialog = true
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
                             IconButton(
                                 onClick = { showCloudSyncDialog = true },
                                 modifier = Modifier
@@ -138,7 +201,7 @@ fun DashboardScreen(
                                     shape = CircleShape,
                                     color = Color.White.copy(alpha = 0.18f),
                                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(34.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                                         Icon(
@@ -149,7 +212,7 @@ fun DashboardScreen(
                                             },
                                             contentDescription = "ক্লাউড ও অফলাইন সিঙ্ক",
                                             tint = Color.White,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(19.dp)
                                         )
                                     }
                                 }
@@ -165,14 +228,14 @@ fun DashboardScreen(
                                     shape = CircleShape,
                                     color = Color.White.copy(alpha = 0.18f),
                                     border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(34.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.Login,
                                             contentDescription = "লগইন",
                                             tint = Color.White,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(19.dp)
                                         )
                                     }
                                 }
@@ -182,6 +245,16 @@ fun DashboardScreen(
                 }
             }
         }
+    ) { scaffoldPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(scaffoldPadding)
+                .background(ekotaSilverBackgroundBrush()),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+
 
         // Auto-Update Prompt Card when a newer build is released
         availableUpdate?.let { update ->
@@ -709,10 +782,15 @@ fun DashboardScreen(
                     containerColor = CardOrangeGradient.first(),
                     contentColor = Color.White,
                     modifier = Modifier.weight(1f),
-                    onClick = if (role == UserRole.ADMIN) onNavigateToMemberRegistration else onNavigateToMembers
+                    onClick = if (role == UserRole.ADMIN) {
+                        { showAddMemberDialog = true }
+                    } else {
+                        onNavigateToMembers
+                    }
                 )
             }
         }
+    }
     }
 
     if (showAccountLoginDialog) {
@@ -804,6 +882,37 @@ fun DashboardScreen(
                 configuredStorageLimitBytes = newLimitBytes
             },
             onDismiss = { showStorageSettingsDialog = false }
+        )
+    }
+
+    if (showAddMemberDialog) {
+        MemberFormDialog(
+            title = "নতুন সদস্য যোগ করুন",
+            initialMember = null,
+            onDismiss = { showAddMemberDialog = false },
+            onSave = { newMember ->
+                viewModel.addMember(
+                    member = newMember,
+                    onSuccess = { showAddMemberDialog = false },
+                    onError = {}
+                )
+            }
+        )
+    }
+
+    if (showAddLedgerDialog) {
+        AddLedgerEntryDialog(
+            onDismiss = { showAddLedgerDialog = false },
+            onSave = { date, desc, moneyIn, moneyOut ->
+                viewModel.addLedgerEntry(
+                    date = date,
+                    desc = desc,
+                    moneyIn = moneyIn,
+                    moneyOut = moneyOut,
+                    onSuccess = { showAddLedgerDialog = false },
+                    onError = {}
+                )
+            }
         )
     }
 }
