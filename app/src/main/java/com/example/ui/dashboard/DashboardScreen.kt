@@ -54,6 +54,8 @@ fun DashboardScreen(
     val userProfile by viewModel.currentUserProfile.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val members by viewModel.members.collectAsStateWithLifecycle()
+    val suggestedMemberSerial = remember(members) { viewModel.suggestNextMemberSerial(members) }
 
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
     val updateBannerDismissed by viewModel.updateBannerDismissed.collectAsStateWithLifecycle()
@@ -283,13 +285,13 @@ fun DashboardScreen(
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "নতুন আপডেট (${update.latestVersionName})",
+                                    text = "নতুন আপডেট (v${update.latestVersionName})",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = ekotaSuccessTextColor()
                                 )
                                 Text(
-                                    text = "আনইন্সটল ছাড়াই সরাসরি আপডেট করুন — সব ডাটা অক্ষুণ্ণ থাকবে।",
+                                    text = "GitHub-এ নতুন সংস্করণ প্রস্তুত — আনইন্সটল ছাড়াই আপডেট করুন, সব ডাটা অক্ষুণ্ণ থাকবে।",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -889,6 +891,7 @@ fun DashboardScreen(
         MemberFormDialog(
             title = "নতুন সদস্য যোগ করুন",
             initialMember = null,
+            suggestedSerial = suggestedMemberSerial,
             onDismiss = { showAddMemberDialog = false },
             onSave = { newMember ->
                 viewModel.addMember(

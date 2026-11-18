@@ -6,8 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,6 +22,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +49,7 @@ fun MemberManagementScreen(
     var showAddDialog by remember { mutableStateOf(false) }
     var memberToEdit by remember { mutableStateOf<Member?>(null) }
     var memberDetailsToShow by remember { mutableStateOf<Member?>(null) }
+    val suggestedSerial = remember(members) { viewModel.suggestNextMemberSerial(members) }
 
     // Area-based filtering for Field Officer vs Admin
     val accessibleMembers = remember(members, role, userProfile) {
@@ -126,7 +131,7 @@ fun MemberManagementScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Member List
+            // Member List with SL | নাম | টাকা Header
             if (filteredMembers.isEmpty()) {
                 Column(
                     modifier = Modifier
@@ -143,13 +148,7 @@ fun MemberManagementScreen(
                     if (isAdmin) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Button(
-                            onClick = {
-                                if (onNavigateToMemberRegistration != null) {
-                                    onNavigateToMemberRegistration()
-                                } else {
-                                    showAddDialog = true
-                                }
-                            },
+                            onClick = { showAddDialog = true },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = EmeraldGreenPrimary,
                                 contentColor = Color.White
@@ -158,23 +157,87 @@ fun MemberManagementScreen(
                         ) {
                             Icon(Icons.Default.PersonAdd, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("নতুন সদস্য নিবন্ধন করুন", fontWeight = FontWeight.Bold)
+                            Text("নতুন সদস্য যোগ করুন", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    itemsIndexed(filteredMembers, key = { _, m -> m.id }) { index, member ->
-                        MemberCard(
-                            member = member,
-                            isAdmin = isAdmin,
-                            cardAccentIndex = index,
-                            onCardClick = { memberDetailsToShow = member },
-                            onEditClick = { memberToEdit = member }
-                        )
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Table / List Header: SL | নাম | টাকা
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(HeaderSlateNavy)
+                                .padding(horizontal = 12.dp, vertical = 11.dp)
+                                .testTag("member_list_header"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "SL",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.width(52.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "নাম",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                textAlign = TextAlign.Start,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "টাকা",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.width(88.dp)
+                            )
+                            if (isAdmin) {
+                                Spacer(modifier = Modifier.width(48.dp))
+                            }
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .testTag("member_list_body")
+                        ) {
+                            itemsIndexed(filteredMembers, key = { _, m -> m.id }) { index, member ->
+                                MemberCard(
+                                    member = member,
+                                    isAdmin = isAdmin,
+                                    cardAccentIndex = index,
+                                    onCardClick = { memberDetailsToShow = member },
+                                    onEditClick = { memberToEdit = member }
+                                )
+                                if (index < filteredMembers.lastIndex) {
+                                    HorizontalDivider(
+                                        thickness = 0.75.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -186,6 +249,7 @@ fun MemberManagementScreen(
         MemberFormDialog(
             title = "নতুন সদস্য যোগ করুন",
             initialMember = null,
+            suggestedSerial = suggestedSerial,
             onDismiss = { showAddDialog = false },
             onSave = { newMember ->
                 viewModel.addMember(newMember, onSuccess = { showAddDialog = false }, onError = {})
@@ -233,190 +297,265 @@ fun MemberCard(
 ) {
     val isDark = LocalIsDarkEkotaTheme.current
     val accent = VibrantCardAccents[cardAccentIndex % VibrantCardAccents.size]
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDark) MaterialTheme.colorScheme.surface else accent.softSurface
-        ),
-        border = BorderStroke(1.dp, accent.gradient.first().copy(alpha = 0.42f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    val rowBg = when {
+        isDark && cardAccentIndex % 2 == 1 -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+        !isDark && cardAccentIndex % 2 == 1 -> accent.softSurface.copy(alpha = 0.35f)
+        else -> MaterialTheme.colorScheme.surface
+    }
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 52.dp)
+            .background(rowBg)
             .clickable { onCardClick() }
-            .testTag("member_card_${member.memberSerial}")
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("member_card_${member.memberSerial}"),
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        // Column 1: SL (01, 02, ...)
+        Text(
+            text = BengaliUtils.formatTwoDigitSerial(member.memberSerial),
+            fontWeight = FontWeight.Bold,
+            color = if (isDark) accent.gradient.last() else HeaderSlateNavy,
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.width(52.dp)
+        )
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // Column 2: নাম
         Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Vibrant Gradient Serial Circle Badge
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(accent.gradient)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = BengaliUtils.toBengaliDigits(member.memberSerial),
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = member.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = if (member.isActive) ekotaBadgeSuccessBg() else ekotaBadgeDangerBg()
-                    ) {
-                        Text(
-                            text = if (member.isActive) "সক্রিয়" else "নিষ্ক্রিয়",
-                            color = if (member.isActive) ekotaSuccessTextColor() else ekotaDangerTextColor(),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-                Text(
-                    text = "মোবাইল: ${member.mobile} | এলাকা: ${member.area}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = "সাপ্তাহিক সঞ্চয়: ${BengaliUtils.formatTaka(member.weeklySavingsAmount)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isDark) accent.gradient.last() else accent.accentInk,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            if (isAdmin) {
-                IconButton(
-                    onClick = onEditClick,
-                    modifier = Modifier.testTag("edit_member_btn_${member.id}")
+            Text(
+                text = member.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            if (!member.isActive) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = ekotaBadgeDangerBg()
                 ) {
-                    Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "সম্পাদনা",
-                        tint = if (isDark) accent.gradient.last() else accent.accentInk
+                    Text(
+                        text = "নিষ্ক্রিয়",
+                        color = ekotaDangerTextColor(),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
         }
+
+        Spacer(modifier = Modifier.width(8.dp))
+
+        // Column 3: টাকা (100, 150, ...)
+        Text(
+            text = BengaliUtils.formatCleanAmount(member.weeklySavingsAmount),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (isDark) accent.gradient.last() else accent.accentInk,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.width(88.dp)
+        )
+
+        if (isAdmin) {
+            IconButton(
+                onClick = onEditClick,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("edit_member_btn_${member.id}")
+            ) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = "সম্পাদনা",
+                    tint = if (isDark) accent.gradient.last() else accent.accentInk,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
     }
+}
+
+private fun normalizeBengaliNumberText(raw: String): String {
+    val sb = StringBuilder(raw.length)
+    for (ch in raw) {
+        sb.append(
+            when (ch) {
+                '০' -> '0'; '১' -> '1'; '২' -> '2'; '৩' -> '3'; '৪' -> '4'
+                '৫' -> '5'; '৬' -> '6'; '৭' -> '7'; '৮' -> '8'; '৯' -> '9'
+                else -> ch
+            }
+        )
+    }
+    return sb.toString()
 }
 
 @Composable
 fun MemberFormDialog(
     title: String,
     initialMember: Member?,
+    suggestedSerial: String = "1",
     onDismiss: () -> Unit,
     onSave: (Member) -> Unit
 ) {
-    var serial by remember { mutableStateOf(initialMember?.memberSerial ?: "") }
-    var name by remember { mutableStateOf(initialMember?.name ?: "") }
-    var mobile by remember { mutableStateOf(initialMember?.mobile ?: "") }
-    var address by remember { mutableStateOf(initialMember?.address ?: "") }
-    var area by remember { mutableStateOf(initialMember?.area ?: "যাদবপুর উত্তর") }
-    var weeklySavings by remember { mutableStateOf(initialMember?.weeklySavingsAmount?.toInt()?.toString() ?: "100") }
-    var isActive by remember { mutableStateOf(initialMember?.isActive ?: true) }
+    val isNewMember = initialMember == null
+    var serial by remember(initialMember, suggestedSerial) {
+        mutableStateOf(initialMember?.memberSerial?.ifBlank { suggestedSerial } ?: suggestedSerial)
+    }
+    var name by remember(initialMember) { mutableStateOf(initialMember?.name ?: "") }
+    var mobile by remember(initialMember) { mutableStateOf(initialMember?.mobile ?: "") }
+    var address by remember(initialMember) { mutableStateOf(initialMember?.address ?: "") }
+    var area by remember(initialMember) { mutableStateOf(initialMember?.area ?: "যাদবপুর উত্তর") }
+    var weeklySavings by remember(initialMember) {
+        mutableStateOf(initialMember?.weeklySavingsAmount?.toInt()?.toString() ?: "100")
+    }
+    var isActive by remember(initialMember) { mutableStateOf(initialMember?.isActive ?: true) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = title, fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = serial,
-                    onValueChange = { serial = it },
-                    label = { Text("ক্রমিক নং (যেমন: ১১)") },
+                    onValueChange = {
+                        serial = it
+                        errorMsg = null
+                    },
+                    label = { Text("ক্রমিক নং (SL অটো)") },
+                    trailingIcon = {
+                        if (isNewMember) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = ekotaBadgeSuccessBg(),
+                                modifier = Modifier.padding(end = 6.dp)
+                            ) {
+                                Text(
+                                    text = "অটো",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ekotaSuccessTextColor(),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("member_form_serial_input")
                 )
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = {
+                        name = it
+                        errorMsg = null
+                    },
                     label = { Text("সদস্যের নাম") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = mobile,
-                    onValueChange = { mobile = it },
-                    label = { Text("মোবাইল নম্বর") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = address,
-                    onValueChange = { address = it },
-                    label = { Text("ঠিকানা") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = area,
-                    onValueChange = { area = it },
-                    label = { Text("এলাকা (যেমন: যাদবপুর দক্ষিণ)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("member_form_name_input")
                 )
                 OutlinedTextField(
                     value = weeklySavings,
-                    onValueChange = { weeklySavings = it },
-                    label = { Text("সাপ্তাহিক সঞ্চয়ের পরিমাণ (টাকা)") },
+                    onValueChange = {
+                        weeklySavings = it
+                        errorMsg = null
+                    },
+                    label = { Text("টাকা (সাপ্তাহিক সঞ্চয়)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("member_form_taka_input")
                 )
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Checkbox(checked = isActive, onCheckedChange = { isActive = it })
-                    Text(text = "সদস্য সক্রিয় রাখুন", style = MaterialTheme.typography.bodyMedium)
+
+                if (!isNewMember) {
+                    OutlinedTextField(
+                        value = mobile,
+                        onValueChange = { mobile = it },
+                        label = { Text("মোবাইল নম্বর") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = { address = it },
+                        label = { Text("ঠিকানা") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = area,
+                        onValueChange = { area = it },
+                        label = { Text("এলাকা (যেমন: যাদবপুর দক্ষিণ)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Checkbox(checked = isActive, onCheckedChange = { isActive = it })
+                        Text(text = "সদস্য সক্রিয় রাখুন", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                errorMsg?.let { err ->
+                    Text(
+                        text = err,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ekotaDangerTextColor()
+                    )
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank() && serial.isNotBlank()) {
-                        val member = (initialMember ?: Member()).copy(
-                            memberSerial = serial,
-                            name = name,
-                            mobile = mobile,
-                            address = address,
-                            area = area,
-                            weeklySavingsAmount = weeklySavings.toDoubleOrNull() ?: 100.0,
-                            isActive = isActive
-                        )
-                        onSave(member)
+                    val cleanSerial = normalizeBengaliNumberText(serial.trim()).ifBlank { suggestedSerial }
+                    val cleanName = name.trim()
+                    val parsedTaka = normalizeBengaliNumberText(weeklySavings.trim()).toDoubleOrNull()
+                    when {
+                        cleanName.isBlank() -> errorMsg = "অনুগ্রহ করে সদস্যের নাম লিখুন"
+                        parsedTaka == null || parsedTaka <= 0.0 -> errorMsg = "সঠিক টাকার পরিমাণ লিখুন"
+                        else -> {
+                            val member = (initialMember ?: Member()).copy(
+                                memberSerial = cleanSerial,
+                                name = cleanName,
+                                mobile = mobile.trim(),
+                                address = address.trim(),
+                                area = area.trim().ifBlank { "যাদবপুর উত্তর" },
+                                weeklySavingsAmount = parsedTaka,
+                                isActive = isActive
+                            )
+                            onSave(member)
+                        }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = EmeraldGreenPrimary,
                     contentColor = Color.White
-                )
+                ),
+                modifier = Modifier.testTag("member_form_save_button")
             ) {
                 Text("সংরক্ষণ করুন")
             }
@@ -444,7 +583,10 @@ fun MemberDetailsDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 DetailRow("ক্রমিক নং:", BengaliUtils.toBengaliDigits(member.memberSerial))
                 DetailRow("মোবাইল নম্বর:", member.mobile.ifBlank { "-" })
                 DetailRow("ঠিকানা:", member.address.ifBlank { "যাদবপুর" })

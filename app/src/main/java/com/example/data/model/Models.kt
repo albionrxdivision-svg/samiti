@@ -209,6 +209,8 @@ data class AppSettings(
     val latestVersionName: String = "",
     val updateNotes: String = "",
     val githubRepoSlug: String = "",
+    val autoUpdateEnabled: Boolean = true,
+    val keepPermanentLink: Boolean = true,
     val updatedBy: String = "",
     @ServerTimestamp val updatedAt: Timestamp? = null
 )

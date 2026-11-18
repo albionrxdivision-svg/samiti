@@ -1,15 +1,13 @@
 package com.example.ui.loans
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -17,28 +15,30 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.Loan
 import com.example.data.model.LoanInstallment
-import com.example.data.model.LoanStatus
 import com.example.data.model.UserRole
 import com.example.ui.MainViewModel
 import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.components.SuccessPopupDialog
+import com.example.ui.savings.AddCollectionDateDialog
+import com.example.ui.savings.EditCollectionDateDialog
 import com.example.ui.theme.*
 import com.example.util.BengaliUtils
+import com.example.util.DailyAccountCalculator
 import com.example.util.SavingsAndFineCalculator
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LoanManagementScreen(
     viewModel: MainViewModel,
@@ -47,6 +47,7 @@ fun LoanManagementScreen(
 ) {
     val loans by viewModel.loans.collectAsStateWithLifecycle()
     val installments by viewModel.loanInstallments.collectAsStateWithLifecycle()
+    val collectionPeriods by viewModel.collectionPeriods.collectAsStateWithLifecycle()
     val members by viewModel.members.collectAsStateWithLifecycle()
     val role by viewModel.userRole.collectAsStateWithLifecycle()
     val appSettings by viewModel.appSettings.collectAsStateWithLifecycle()
@@ -58,86 +59,154 @@ fun LoanManagementScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
-    var loanToPayInstallment by remember { mutableStateOf<Loan?>(null) }
+    // 0: Weekly Installment Collection Form (default), 1: Loan Matrix Sheet
+    var selectedModeTab by remember { mutableIntStateOf(0) }
+
+    var showAddDateDialog by remember { mutableStateOf(false) }
+    var dateToEdit by remember { mutableStateOf<String?>(null) }
+    var entryDialogTarget by remember { mutableStateOf<Pair<Loan, String>?>(null) }
     var loanToMarkMissed by remember { mutableStateOf<Loan?>(null) }
     var loanDetailsTarget by remember { mutableStateOf<Loan?>(null) }
+    var showNewLoanDialog by remember { mutableStateOf(false) }
+    var showTopMoreMenu by remember { mutableStateOf(false) }
     var successPopupData by remember { mutableStateOf<Pair<String, String?>?>(null) }
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: All, 1: Active, 2: Paid, 3: New Loan (Admin)
 
-    LaunchedEffect(isAdmin) {
-        if (!isAdmin && selectedTab == 3) {
-            selectedTab = 0
+    val sortedDates = remember(collectionPeriods, installments) {
+        val periodDates = collectionPeriods.map { SavingsAndFineCalculator.normalizeDateStr(it.dateStr) }
+        val instDates = installments.map { SavingsAndFineCalculator.normalizeDateStr(it.installmentDate) }
+        val combined = SavingsAndFineCalculator.sortDateStrings(periodDates + instDates)
+        if (combined.isEmpty()) listOf(BengaliUtils.getCurrentDateStr()) else combined
+    }
+
+    val selectedDate by viewModel.selectedLoanDate.collectAsStateWithLifecycle()
+    LaunchedEffect(sortedDates) {
+        if (selectedDate !in sortedDates && sortedDates.isNotEmpty()) {
+            viewModel.setSelectedLoanDate(sortedDates.last())
         }
     }
 
-    val filteredLoans = remember(loans, selectedTab) {
-        when (selectedTab) {
-            1 -> loans.filter { it.status == LoanStatus.ACTIVE.name }
-            2 -> loans.filter { it.status == LoanStatus.PAID.name }
-            else -> loans
+    val sortedLoans = remember(loans) {
+        loans.sortedWith(
+            compareBy<Loan>(
+                { it.memberSerial.toIntOrNull() ?: Int.MAX_VALUE },
+                { it.memberSerial },
+                { it.memberName }
+            )
+        )
+    }
+
+    // Map: (loanId, date) -> LoanInstallment (supports raw + normalized date keys)
+    val installmentMap = remember(installments) {
+        val map = mutableMapOf<String, LoanInstallment>()
+        for (inst in installments) {
+            val normDate = DailyAccountCalculator.normalizeDateKey(inst.installmentDate)
+            map["${inst.loanId}_${inst.installmentDate}"] = inst
+            if (normDate.isNotBlank()) {
+                map["${inst.loanId}_$normDate"] = inst
+            }
+        }
+        map
+    }
+
+    val normalizedSelectedDate = remember(selectedDate) {
+        DailyAccountCalculator.normalizeDateKey(selectedDate).ifBlank { selectedDate }
+    }
+
+    // Editable amounts map for the Collection Form: loanId -> String input
+    val amountInputs = remember { mutableStateMapOf<String, String>() }
+
+    // Sync/pre-populate form inputs whenever selectedDate, loans, or installments change
+    LaunchedEffect(selectedDate, normalizedSelectedDate, sortedLoans, installments) {
+        sortedLoans.forEach { loan ->
+            val existing = installmentMap["${loan.id}_$selectedDate"]
+                ?: installmentMap["${loan.id}_$normalizedSelectedDate"]
+            val initialText = when {
+                existing != null && !existing.isMissed && existing.amount > 0.0 ->
+                    BengaliUtils.formatCleanAmount(existing.amount)
+                existing != null && existing.isMissed -> "0"
+                loan.remainingLoan <= 0.0 -> "0"
+                else -> BengaliUtils.formatCleanAmount(loan.weeklyInstallment)
+            }
+            amountInputs[loan.id] = initialText
         }
     }
 
-    val totalDisbursed = remember(loans) { loans.sumOf { it.principal } }
-    val totalPaid = remember(loans) { loans.sumOf { it.totalPaid } }
-    val totalDue = remember(loans) { loans.sumOf { it.remainingLoan } }
+    // Column totals calculation for matrix sheet
+    val columnTotals = remember(sortedDates, installments, sortedLoans) {
+        sortedDates.associateWith { date ->
+            val normDate = DailyAccountCalculator.normalizeDateKey(date)
+            sortedLoans.sumOf { loan ->
+                val rec = installmentMap["${loan.id}_$date"]
+                    ?: installmentMap["${loan.id}_$normDate"]
+                if (rec != null && !rec.isMissed && rec.status != "REJECTED") rec.amount else 0.0
+            }
+        }
+    }
+
+    val grandTotal = remember(columnTotals) { columnTotals.values.sum() }
 
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             EkotaCompactTopBar(
                 title = "ঋণ ব্যবস্থাপনা",
+                subtitle = "ঋণ: ${BengaliUtils.toBengaliDigits(sortedLoans.size)} জন | মোট আদায়: ${BengaliUtils.formatTaka(grandTotal)}",
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = onNavigateBack,
+                        modifier = Modifier.testTag("back_button")
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "ফিরে যান")
                     }
                 },
                 actions = {
                     IconButton(
-                        onClick = onNavigateToFines,
-                        modifier = Modifier.testTag("loans_to_fines_button")
+                        onClick = { viewModel.refreshMembersFromFirestore() },
+                        modifier = Modifier.testTag("refresh_loans_button")
                     ) {
-                        Icon(
-                            Icons.Default.ReceiptLong,
-                            contentDescription = "জরিমানা শিট",
-                            tint = Color.White
-                        )
+                        Icon(Icons.Default.Refresh, contentDescription = "Firestore থেকে রিফ্রেশ")
                     }
-                    if (isAdmin && selectedTab != 3) {
-                        TextButton(
-                            onClick = { selectedTab = 3 },
+                    if (isAdmin) {
+                        IconButton(
+                            onClick = { showNewLoanDialog = true },
                             modifier = Modifier.testTag("top_new_loan_button")
                         ) {
-                            Icon(
-                                Icons.Default.AddCircleOutline,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "নতুন ঋণ",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            Icon(Icons.Default.PersonAdd, contentDescription = "নতুন ঋণ বিতরণ")
+                        }
+                        Box {
+                            IconButton(
+                                onClick = { showTopMoreMenu = true },
+                                modifier = Modifier.testTag("loans_more_actions_button")
+                            ) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "আরও অপশন")
+                            }
+                            DropdownMenu(
+                                expanded = showTopMoreMenu,
+                                onDismissRequest = { showTopMoreMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("নতুন কালেকশন তারিখ") },
+                                    leadingIcon = { Icon(Icons.Default.Event, contentDescription = null) },
+                                    modifier = Modifier.testTag("add_loan_date_button"),
+                                    onClick = {
+                                        showTopMoreMenu = false
+                                        showAddDateDialog = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("জরিমানা শিট (৳১০)") },
+                                    leadingIcon = { Icon(Icons.Default.ReceiptLong, contentDescription = null) },
+                                    modifier = Modifier.testTag("loans_more_fines_item"),
+                                    onClick = {
+                                        showTopMoreMenu = false
+                                        onNavigateToFines()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             )
-        },
-        floatingActionButton = {
-            if (isAdmin && selectedTab != 3) {
-                ExtendedFloatingActionButton(
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text("নতুন ঋণ বিতরণ", fontWeight = FontWeight.Bold) },
-                    containerColor = CardPurpleGradient.first(),
-                    contentColor = Color.White,
-                    modifier = Modifier.testTag("new_loan_fab")
-                )
-            }
         }
     ) { paddingValues ->
         Column(
@@ -145,278 +214,551 @@ fun LoanManagementScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .background(ekotaSilverBackgroundBrush())
-                .padding(16.dp)
         ) {
-            // Loan Summary Header Card (Vibrant Gradient matching reference card palette)
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                modifier = Modifier.fillMaxWidth()
+            // Mode Switch Tabs: Collection Form vs Loan Matrix Sheet (identical to WeeklySavingsScreen)
+            TabRow(
+                selectedTabIndex = selectedModeTab,
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = HeaderSlateNavy
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Brush.linearGradient(colors = CardPurpleGradient))
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SummaryColumn("মোট বিতরণ", BengaliUtils.formatTaka(totalDisbursed), Color.White, Modifier.weight(1f))
-                        SummaryColumn("মোট আদায়", BengaliUtils.formatTaka(totalPaid), Color.White, Modifier.weight(1f))
-                        SummaryColumn("অবশিষ্ট বকেয়া", BengaliUtils.formatTaka(totalDue), Color.White, Modifier.weight(1f))
+                Tab(
+                    selected = selectedModeTab == 0,
+                    onClick = { selectedModeTab = 0 },
+                    selectedContentColor = HeaderSlateNavy,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("tab_loan_collection_form"),
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "সাপ্তাহিক কিস্তি ফর্ম",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (selectedModeTab == 0) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-                }
+                )
+                Tab(
+                    selected = selectedModeTab == 1,
+                    onClick = { selectedModeTab = 1 },
+                    selectedContentColor = HeaderSlateNavy,
+                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("tab_loan_sheet"),
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "ঋণ শিট (${BengaliUtils.toBengaliDigits(sortedDates.size)} সপ্তাহ)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (selectedModeTab == 1) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                )
             }
 
-            if (!syncStatus.isOnline || pendingInstallmentIds.isNotEmpty() || syncStatus.isSyncing) {
-                Spacer(modifier = Modifier.height(10.dp))
-                val isOffline = !syncStatus.isOnline
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isOffline) ekotaBadgeWarningBg() else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                    border = BorderStroke(
-                        1.dp,
-                        (if (isOffline) ekotaWarningTextColor() else MaterialTheme.colorScheme.primary).copy(alpha = 0.4f)
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("loans_offline_sync_banner")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+            if (selectedModeTab == 0) {
+                // -------------------------------------------------------------
+                // TAB 0: WEEKLY LOAN INSTALLMENT COLLECTION FORM
+                // -------------------------------------------------------------
+                val dateControlsContent: @Composable () -> Unit = {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            imageVector = if (isOffline) Icons.Default.CloudOff else Icons.Default.CloudSync,
-                            contentDescription = null,
-                            tint = if (isOffline) ekotaWarningTextColor() else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = when {
-                                isOffline -> "অফলাইন ক্যাশ চালু • কিস্তি এন্ট্রি ফোনে সংরক্ষিত হচ্ছে, নেট ফিরলে অটো সিঙ্ক হবে"
-                                syncStatus.isSyncing -> "ক্লাউডে কিস্তির তথ্য সিঙ্ক হচ্ছে..."
-                                else -> "${BengaliUtils.toBengaliDigits(pendingInstallmentIds.size)}টি কিস্তির এন্ট্রি সিঙ্কের অপেক্ষায়"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Filter & Admin Action Tabs (fitted cleanly within screen width without clipping)
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                TabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor = Color.Transparent,
-                    contentColor = HeaderSlateNavy,
-                    divider = {}
-                ) {
-                    Tab(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        selectedContentColor = HeaderSlateNavy,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        text = {
-                            Text(
-                                text = "সব ঋণ",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier.testTag("all_loans_tab")
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        selectedContentColor = HeaderSlateNavy,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        text = {
-                            Text(
-                                text = "চলতি",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier.testTag("active_loans_tab")
-                    )
-                    Tab(
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 },
-                        selectedContentColor = HeaderSlateNavy,
-                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        text = {
-                            Text(
-                                text = "পরিশোধিত",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier.testTag("paid_loans_tab")
-                    )
-                    if (isAdmin) {
-                        Tab(
-                            selected = selectedTab == 3,
-                            onClick = { selectedTab = 3 },
-                            selectedContentColor = CardPurpleGradient.first(),
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            text = {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
                                 Text(
-                                    text = "নতুন ঋণ",
+                                    text = "কালেকশন তারিখ:",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
-                            },
-                            modifier = Modifier.testTag("new_loan_tab")
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (isAdmin && selectedTab == 3) {
-                NewLoanDistributionForm(
-                    members = members,
-                    defaultInterestRatePercent = appSettings.interestRatePercent,
-                    isSaving = isSavingLoan,
-                    existingLoans = loans,
-                    onDistribute = { newLoan, optionalMember ->
-                        viewModel.createLoan(
-                            loan = newLoan,
-                            alsoAddMember = optionalMember,
-                            onSuccess = {
-                                selectedTab = 1
-                                successPopupData = Pair(
-                                    "${newLoan.memberName}-এর নামে ${BengaliUtils.formatTaka(newLoan.principal)} নতুন ঋণ সফলভাবে বিতরণ হয়েছে।",
-                                    "সাপ্তাহিক কিস্তি: ${BengaliUtils.formatTaka(newLoan.weeklyInstallment)} | তারিখ: ${newLoan.loanDate}"
-                                )
-                            },
-                            onError = { msg ->
-                                coroutineScope.launch {
-                                    snackbarHostState.showSnackbar(msg)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AssistChip(
+                                        onClick = onNavigateToFines,
+                                        label = {
+                                            Text(
+                                                text = "জরিমানা শিট (৳১০)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = ekotaWarningTextColor()
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.ReceiptLong,
+                                                contentDescription = null,
+                                                tint = ekotaWarningTextColor(),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("loans_to_fines_button")
+                                    )
+                                    val syncChipText = when {
+                                        !syncStatus.isCloudAuthenticated -> "লোকাল"
+                                        !syncStatus.isOnline && syncStatus.pendingCount > 0 ->
+                                            "অফলাইন (${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)})"
+                                        !syncStatus.isOnline -> "অফলাইন ক্যাশ"
+                                        syncStatus.isSyncing || syncStatus.pendingCount > 0 ->
+                                            "সিঙ্ক বাকি (${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)})"
+                                        else -> "সিঙ্কড"
+                                    }
+                                    val syncChipIcon = when {
+                                        !syncStatus.isCloudAuthenticated -> Icons.Default.Storage
+                                        !syncStatus.isOnline -> Icons.Default.CloudOff
+                                        syncStatus.isSyncing || syncStatus.pendingCount > 0 -> Icons.Default.CloudUpload
+                                        else -> Icons.Default.CloudDone
+                                    }
+                                    val syncChipTint = when {
+                                        !syncStatus.isCloudAuthenticated -> MaterialTheme.colorScheme.primary
+                                        !syncStatus.isOnline -> ekotaWarningTextColor()
+                                        syncStatus.isSyncing || syncStatus.pendingCount > 0 -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.primary
+                                    }
+                                    AssistChip(
+                                        onClick = {
+                                            if (syncStatus.isCloudAuthenticated) {
+                                                viewModel.triggerManualSync { _, msg ->
+                                                    coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                                                }
+                                            } else {
+                                                viewModel.refreshMembersFromFirestore()
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                text = syncChipText,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = syncChipIcon,
+                                                contentDescription = null,
+                                                tint = syncChipTint,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("loans_sync_status_chip")
+                                    )
                                 }
                             }
-                        )
-                    },
-                    onCancel = { selectedTab = 0 }
-                )
-            } else if (filteredLoans.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+
+                            // Horizontal scrollable date chips
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                sortedDates.forEach { date ->
+                                    FilterChip(
+                                        selected = selectedDate == date,
+                                        onClick = { viewModel.setSelectedLoanDate(date) },
+                                        label = {
+                                            Text(
+                                                text = date,
+                                                fontWeight = if (selectedDate == date) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        },
+                                        leadingIcon = if (selectedDate == date) {
+                                            { Icon(Icons.Default.EventAvailable, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                        } else null,
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = MaterialTheme.colorScheme.surface,
+                                            selectedContainerColor = HeaderSlateNavy,
+                                            selectedLabelColor = Color.White,
+                                            selectedLeadingIconColor = Color.White,
+                                            labelColor = MaterialTheme.colorScheme.onSurface
+                                        ),
+                                        modifier = Modifier.testTag("loan_date_chip_$date")
+                                    )
+                                }
+                                if (isAdmin) {
+                                    AssistChip(
+                                        onClick = { dateToEdit = selectedDate },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = "তারিখ আপডেট",
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("chip_edit_selected_loan_date")
+                                    )
+                                    AssistChip(
+                                        onClick = { showAddDateDialog = true },
+                                        label = {
+                                            Text(
+                                                text = "+ নতুন তারিখ",
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("chip_add_new_loan_date")
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (sortedLoans.isEmpty()) {
+                    dateControlsContent()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "কোনো ঋণের তথ্য নেই",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (isAdmin) {
-                            OutlinedButton(onClick = { selectedTab = 3 }) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountBalanceWallet,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Text(
+                                text = "কোনো ঋণের তথ্য পাওয়া যায়নি",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (isAdmin) {
+                                Button(
+                                    onClick = { showNewLoanDialog = true },
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("empty_new_loan_button"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EmeraldGreenPrimary,
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Icon(Icons.Default.PersonAdd, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("নতুন ঋণ বিতরণ করুন", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("weekly_loan_form_list")
+                    ) {
+                        item(key = "date_controls_header") {
+                            dateControlsContent()
+                        }
+                        stickyHeader(key = "loan_list_header") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp)
+                                    .padding(top = 6.dp)
+                                    .background(HeaderSlateNavy, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                                    .testTag("loan_list_header"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "SL",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.width(40.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("প্রথম ঋণ বিতরণ করুন")
+                                Text(
+                                    text = "নাম",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    textAlign = TextAlign.Start,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "টাকা",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    textAlign = TextAlign.End,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.width(72.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "জমা",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.width(86.dp)
+                                )
+                            }
+                        }
+                        itemsIndexed(sortedLoans, key = { _, loan -> loan.id }) { index, loan ->
+                            val existing = installmentMap["${loan.id}_$selectedDate"]
+                                ?: installmentMap["${loan.id}_$normalizedSelectedDate"]
+                            val submittedThisWeek = remember(loan.id, selectedDate, normalizedSelectedDate, installments) {
+                                installments.any {
+                                    it.loanId == loan.id &&
+                                        it.status != "REJECTED" &&
+                                        (DailyAccountCalculator.normalizeDateKey(it.installmentDate) == normalizedSelectedDate ||
+                                            SavingsAndFineCalculator.isSameWeek(it.installmentDate, selectedDate))
+                                }
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp)
+                            ) {
+                                MemberLoanInputRow(
+                                    loan = loan,
+                                    amountText = amountInputs[loan.id] ?: BengaliUtils.formatCleanAmount(loan.weeklyInstallment),
+                                    existingInstallment = existing,
+                                    isAdmin = isAdmin,
+                                    isSubmittedThisWeek = submittedThisWeek,
+                                    isPendingSync = existing != null && (existing.id in pendingInstallmentIds),
+                                    cardAccentIndex = index,
+                                    onAmountChange = { newText ->
+                                        amountInputs[loan.id] = newText
+                                    },
+                                    onMemberClick = { loanDetailsTarget = loan },
+                                    onSubmitLoan = {
+                                        val rawAmt = amountInputs[loan.id] ?: BengaliUtils.formatCleanAmount(loan.weeklyInstallment)
+                                        val parsedAmt = rawAmt.toDoubleOrNull()
+                                        if (parsedAmt == null || parsedAmt <= 0.0) {
+                                            coroutineScope.launch {
+                                                snackbarHostState.showSnackbar("অনুগ্রহ করে সঠিক কিস্তির পরিমাণ লিখুন")
+                                            }
+                                        } else {
+                                            viewModel.recordLoanInstallment(
+                                                loan = loan,
+                                                date = selectedDate,
+                                                amount = parsedAmt,
+                                                onSuccess = {
+                                                    coroutineScope.launch {
+                                                        snackbarHostState.showSnackbar(
+                                                            "${loan.memberName}-এর $selectedDate তারিখের ${BengaliUtils.formatTaka(parsedAmt)} কিস্তি সাবমিট হয়েছে"
+                                                        )
+                                                    }
+                                                },
+                                                onError = { err ->
+                                                    coroutineScope.launch {
+                                                        snackbarHostState.showSnackbar(err)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                )
+                                if (index < sortedLoans.lastIndex) {
+                                    HorizontalDivider(
+                                        thickness = 0.75.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                }
                             }
                         }
                     }
                 }
             } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    itemsIndexed(filteredLoans, key = { _, loan -> loan.id }) { index, loan ->
-                        val loanHistory = installments.filter { it.loanId == loan.id && !it.isMissed }
-                        val todayStr = BengaliUtils.getCurrentDateStr()
-                        val thisWeekInstallment = installments.firstOrNull {
-                            it.loanId == loan.id &&
-                                it.status != "REJECTED" &&
-                                SavingsAndFineCalculator.isSameWeek(it.installmentDate, todayStr)
+                // -------------------------------------------------------------
+                // TAB 1: FULL MATRIX LOAN SHEET (Pinned Serial & Name)
+                // -------------------------------------------------------------
+                if (sortedLoans.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TableChart,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Text(
+                                text = "এখনো কোনো ঋণ বিতরণ করা হয়নি",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center
+                            )
+                            if (isAdmin) {
+                                Button(
+                                    onClick = { showNewLoanDialog = true },
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EmeraldGreenPrimary,
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Icon(Icons.Default.PersonAdd, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("প্রথম ঋণ বিতরণ করুন", fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
-                        val submittedThisWeek = thisWeekInstallment != null
-                        val latestCollector = thisWeekInstallment?.officerName?.ifBlank { "" }
-                            ?: loanHistory.lastOrNull()?.officerName?.ifBlank { "" }
-                            ?: ""
-                        val hasPendingInstSync = installments.any { it.loanId == loan.id && it.id in pendingInstallmentIds } ||
-                            (loan.id in syncStatus.pendingDocumentIds)
-                        LoanCard(
-                            loan = loan,
-                            installmentsCount = loanHistory.size,
-                            isAdmin = isAdmin,
-                            isPendingSync = hasPendingInstSync,
-                            isSubmittedThisWeek = submittedThisWeek,
-                            cardAccentIndex = index,
-                            latestCollectorName = latestCollector,
-                            onCardClick = { loanDetailsTarget = loan },
-                            onCollectInstallment = { loanToPayInstallment = loan },
-                            onMarkMissedInstallment = { loanToMarkMissed = loan }
-                        )
                     }
+                } else {
+                    WeeklyLoanMatrixTable(
+                        loans = sortedLoans,
+                        sortedDates = sortedDates,
+                        installmentMap = installmentMap,
+                        columnTotals = columnTotals,
+                        grandTotal = grandTotal,
+                        onCellClick = { loan, date ->
+                            val normCellDate = DailyAccountCalculator.normalizeDateKey(date)
+                            val alreadySubmittedWeek = installments.any {
+                                it.loanId == loan.id &&
+                                    it.status != "REJECTED" &&
+                                    (DailyAccountCalculator.normalizeDateKey(it.installmentDate) == normCellDate ||
+                                        SavingsAndFineCalculator.isSameWeek(it.installmentDate, date))
+                            }
+                            if (alreadySubmittedWeek) {
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("এই তারিখে ($date) ইতিমধ্যেই কিস্তি সাবমিট করা হয়েছে। এক তারিখে দুইবার সাবমিট করা যাবে না।")
+                                }
+                            } else if (loan.remainingLoan <= 0.0) {
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("${loan.memberName}-এর ঋণ সম্পূর্ণ পরিশোধ হয়েছে।")
+                                }
+                            } else {
+                                entryDialogTarget = Pair(loan, date)
+                            }
+                        },
+                        onLoanClick = { loan -> loanDetailsTarget = loan },
+                        onDateHeaderClick = if (isAdmin) { date: String -> dateToEdit = date } else null
+                    )
                 }
             }
         }
     }
 
-    // Record Installment Dialog
-    loanToPayInstallment?.let { loan ->
+    // Installment Entry Dialog for Matrix Table Cell
+    entryDialogTarget?.let { (loan, date) ->
         LoanInstallmentDialog(
             loan = loan,
-            onDismiss = { loanToPayInstallment = null },
-            onSave = { amount, date ->
+            initialDate = date,
+            onDismiss = { entryDialogTarget = null },
+            onSave = { amount, chosenDate ->
                 viewModel.recordLoanInstallment(
                     loan = loan,
-                    date = date,
+                    date = chosenDate,
                     amount = amount,
                     onSuccess = {
-                        loanToPayInstallment = null
-                        val catchUpNote = if (loan.missedInstallments > 0 && amount >= loan.weeklyInstallment * 2) {
-                            "পূর্বের বকেয়া কিস্তিসহ কাউন্ট হয়েছে"
-                        } else null
-                        val offlineNote = if (syncStatus.isCloudAuthenticated && !syncStatus.isOnline) {
-                            "অফলাইনে সংরক্ষিত, নেট ফিরলে অটো সিঙ্ক হবে"
-                        } else null
-                        val subNote = listOfNotNull(catchUpNote, offlineNote).joinToString("\n").ifBlank { null }
+                        entryDialogTarget = null
+                        val statusNote = if (role == UserRole.FIELD_OFFICER) "অনুমোদনের জন্য পাঠানো হয়েছে" else null
                         successPopupData = Pair(
-                            "${loan.memberName}-এর ${BengaliUtils.formatTaka(amount)} ঋণের কিস্তি সফলভাবে জমা হয়েছে।",
-                            subNote
+                            "${loan.memberName}-এর $chosenDate তারিখের ${BengaliUtils.formatTaka(amount)} কিস্তি সফলভাবে জমা হয়েছে।",
+                            statusNote
                         )
                     },
-                    onError = { msg ->
-                        coroutineScope.launch {
-                            snackbarHostState.showSnackbar(msg)
+                    onError = { err ->
+                        coroutineScope.launch { snackbarHostState.showSnackbar(err) }
+                    }
+                )
+            }
+        )
+    }
+
+    // Add New Collection Date Dialog
+    if (showAddDateDialog) {
+        AddCollectionDateDialog(
+            currentMonthHeading = appSettings.currentMonthHeading,
+            onDismiss = { showAddDateDialog = false },
+            onAdd = { newDate ->
+                viewModel.addCollectionDate(
+                    dateStr = newDate,
+                    monthYear = appSettings.currentMonthHeading,
+                    onSuccess = {
+                        viewModel.setSelectedLoanDate(newDate)
+                        showAddDateDialog = false
+                    },
+                    onError = { err ->
+                        coroutineScope.launch { snackbarHostState.showSnackbar(err) }
+                    }
+                )
+            }
+        )
+    }
+
+    // Update Existing Collection Date Dialog (Admin only)
+    dateToEdit?.let { oldDate ->
+        EditCollectionDateDialog(
+            oldDate = oldDate,
+            onDismiss = { dateToEdit = null },
+            onSave = { newDate ->
+                viewModel.updateCollectionDate(
+                    oldDate = oldDate,
+                    newDate = newDate,
+                    monthYear = appSettings.currentMonthHeading,
+                    onSuccess = {
+                        if (selectedDate == oldDate) {
+                            viewModel.setSelectedLoanDate(newDate)
                         }
+                        dateToEdit = null
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("তারিখ '$oldDate' থেকে '$newDate'-তে আপডেট হয়েছে")
+                        }
+                    },
+                    onError = { err ->
+                        coroutineScope.launch { snackbarHostState.showSnackbar(err) }
                     }
                 )
             }
@@ -426,7 +768,7 @@ fun LoanManagementScreen(
     // Missed Loan Installment Dialog (+10 BDT Fine on separate Fine Sheet)
     loanToMarkMissed?.let { loan ->
         var missedDateText by remember(loan.id) {
-            mutableStateOf(loan.nextInstallmentDate.ifBlank { BengaliUtils.getCurrentDateStr() })
+            mutableStateOf(selectedDate.ifBlank { BengaliUtils.getCurrentDateStr() })
         }
         AlertDialog(
             onDismissRequest = { loanToMarkMissed = null },
@@ -434,7 +776,7 @@ fun LoanManagementScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "${loan.memberName} (${BengaliUtils.toBengaliDigits(loan.memberSerial)}) এই সপ্তাহে কিস্তি না দিলে পরের সপ্তাহে ৳১০ জরিমানা আলাদা জরিমানা শিটে যুক্ত হবে। মূল ঋণের টাকা অপরিবর্তিত থাকবে।",
+                        text = "${loan.memberName} (${BengaliUtils.formatTwoDigitSerial(loan.memberSerial)}) এই সপ্তাহে কিস্তি না দিলে পরের সপ্তাহে ৳১০ জরিমানা আলাদা জরিমানা শিটে যুক্ত হবে। মূল ঋণের টাকা অপরিবর্তিত থাকবে।",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -486,8 +828,68 @@ fun LoanManagementScreen(
         LoanHistoryDialog(
             loan = loan,
             installmentHistory = history,
+            isAdmin = isAdmin,
+            onMarkMissed = {
+                loanDetailsTarget = null
+                loanToMarkMissed = loan
+            },
             onDismiss = { loanDetailsTarget = null }
         )
+    }
+
+    // New Loan Distribution Dialog (Admin only)
+    if (isAdmin && showNewLoanDialog) {
+        Dialog(
+            onDismissRequest = { showNewLoanDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Scaffold(
+                topBar = {
+                    EkotaCompactTopBar(
+                        title = "নতুন ঋণ বিতরণ",
+                        navigationIcon = {
+                            IconButton(onClick = { showNewLoanDialog = false }) {
+                                Icon(Icons.Default.Close, contentDescription = "বন্ধ করুন")
+                            }
+                        }
+                    )
+                }
+            ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .background(ekotaSilverBackgroundBrush())
+                        .padding(16.dp)
+                ) {
+                    NewLoanDistributionForm(
+                        members = members,
+                        defaultInterestRatePercent = appSettings.interestRatePercent,
+                        isSaving = isSavingLoan,
+                        existingLoans = loans,
+                        onDistribute = { newLoan, optionalMember ->
+                            viewModel.createLoan(
+                                loan = newLoan,
+                                alsoAddMember = optionalMember,
+                                onSuccess = {
+                                    showNewLoanDialog = false
+                                    successPopupData = Pair(
+                                        "${newLoan.memberName}-এর নামে ${BengaliUtils.formatTaka(newLoan.principal)} নতুন ঋণ সফলভাবে বিতরণ হয়েছে।",
+                                        "সাপ্তাহিক কিস্তি: ${BengaliUtils.formatTaka(newLoan.weeklyInstallment)} | তারিখ: ${newLoan.loanDate}"
+                                    )
+                                },
+                                onError = { msg ->
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar(msg)
+                                    }
+                                }
+                            )
+                        },
+                        onCancel = { showNewLoanDialog = false }
+                    )
+                }
+            }
+        }
     }
 
     successPopupData?.let { (msg, sub) ->
@@ -498,613 +900,4 @@ fun LoanManagementScreen(
             onDismiss = { successPopupData = null }
         )
     }
-}
-
-@Composable
-fun SummaryColumn(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.White.copy(alpha = 0.94f),
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = color,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-fun LoanCard(
-    loan: Loan,
-    installmentsCount: Int,
-    isAdmin: Boolean = false,
-    isPendingSync: Boolean = false,
-    isSubmittedThisWeek: Boolean = false,
-    cardAccentIndex: Int = 0,
-    latestCollectorName: String = "",
-    onCardClick: () -> Unit,
-    onCollectInstallment: () -> Unit,
-    onMarkMissedInstallment: () -> Unit = {}
-) {
-    val isDark = LocalIsDarkEkotaTheme.current
-    val accent = VibrantCardAccents[cardAccentIndex % VibrantCardAccents.size]
-    val cardContainerColor = when {
-        isDark -> MaterialTheme.colorScheme.surface
-        isSubmittedThisWeek -> accent.softSurface
-        else -> accent.softSurface.copy(alpha = 0.65f)
-    }
-    val cardBorderColor = accent.gradient.first().copy(alpha = if (isSubmittedThisWeek) 0.72f else 0.36f)
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = cardContainerColor),
-        border = BorderStroke(if (isSubmittedThisWeek) 1.4.dp else 1.dp, cardBorderColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCardClick() }
-            .testTag("loan_card_${loan.memberSerial}")
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(Brush.linearGradient(colors = accent.gradient)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = BengaliUtils.toBengaliDigits(loan.memberSerial),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = loan.memberName,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (!isDark) accent.accentInk else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "তারিখ: ${loan.loanDate}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                        if (latestCollectorName.isNotBlank() || isSubmittedThisWeek) {
-                            Text(
-                                text = "জমাদানকারী: ${latestCollectorName.ifBlank { "অ্যাডমিন" }}",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isDark) accent.gradient.last() else accent.accentInk,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (loan.status == LoanStatus.PAID.name) ekotaBadgeSuccessBg() else ekotaBadgeWarningBg()
-                    ) {
-                        Text(
-                            text = if (loan.status == LoanStatus.PAID.name) "পরিশোধিত" else "চলতি ঋণ",
-                            color = if (loan.status == LoanStatus.PAID.name) ekotaSuccessTextColor() else ekotaWarningTextColor(),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                    if (isSubmittedThisWeek) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = ekotaBadgeSuccessBg(),
-                            modifier = Modifier.testTag("loan_week_submitted_${loan.id}")
-                        ) {
-                            Text(
-                                text = "এই সপ্তাহে জমা ✓",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = ekotaSuccessTextColor(),
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                    if (isPendingSync) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = ekotaBadgeWarningBg(),
-                            modifier = Modifier.testTag("loan_pending_sync_${loan.id}")
-                        ) {
-                            Text(
-                                text = "সিঙ্ক বাকি",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = ekotaWarningTextColor(),
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (loan.missedInstallments > 0 && loan.remainingLoan > 0) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = ekotaBadgeDangerBg(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.WarningAmber,
-                            contentDescription = null,
-                            tint = ekotaDangerTextColor(),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "বকেয়া কিস্তি: ${BengaliUtils.toBengaliDigits(loan.missedInstallments)} সপ্তাহ (ডাবল কিস্তি দিলে পূর্বেরটি কাউন্ট হবে)",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ekotaDangerTextColor()
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Breakdown Grid
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "মূল ঋণ",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = BengaliUtils.formatTaka(loan.principal),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "নির্ধারিত সুদ",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = BengaliUtils.formatTaka(loan.interest),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "পরিশোধযোগ্য",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = BengaliUtils.formatTaka(loan.totalPayable),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "সাপ্তাহিক কিস্তি",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = BengaliUtils.formatTaka(loan.weeklyInstallment),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "জমা কিস্তি (${BengaliUtils.toBengaliDigits(installmentsCount)}টি)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = BengaliUtils.formatTaka(loan.totalPaid),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = ekotaSuccessTextColor(),
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "অবশিষ্ট ঋণ",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = BengaliUtils.formatTaka(loan.remainingLoan),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = ekotaDangerTextColor(),
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Installment Collection & Missed Week Buttons (Hidden once submitted this week)
-            if (loan.remainingLoan > 0 && !isSubmittedThisWeek) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = onCollectInstallment,
-                        modifier = Modifier
-                            .weight(1.35f)
-                            .heightIn(min = 48.dp)
-                            .testTag("collect_installment_btn_${loan.id}"),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = accent.gradient.first(),
-                            contentColor = Color.White
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-                    ) {
-                        Icon(Icons.Default.AddCard, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "কিস্তি জমা (${BengaliUtils.formatTaka(loan.weeklyInstallment)})",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    if (isAdmin) {
-                        OutlinedButton(
-                            onClick = onMarkMissedInstallment,
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 48.dp)
-                                .testTag("missed_installment_btn_${loan.id}"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = ekotaDangerTextColor()
-                            ),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = "দেয়নি (+৳১০)",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.labelMedium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            } else if (loan.remainingLoan > 0 && isSubmittedThisWeek) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = ekotaBadgeSuccessBg(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("loan_installment_submitted_pill_${loan.id}")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = ekotaSuccessTextColor(),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "এই সপ্তাহের কিস্তি জমা সম্পন্ন ✓",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = ekotaSuccessTextColor()
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun LoanInstallmentDialog(
-    loan: Loan,
-    onDismiss: () -> Unit,
-    onSave: (amount: Double, date: String) -> Unit
-) {
-    val singleAmt = loan.weeklyInstallment.toInt().coerceAtLeast(0).toString()
-    val doubleAmt = (loan.weeklyInstallment * 2).coerceAtMost(loan.remainingLoan).toInt().coerceAtLeast(0).toString()
-    var amountText by remember {
-        mutableStateOf(if (loan.missedInstallments > 0) doubleAmt else singleAmt)
-    }
-    var dateText by remember { mutableStateOf(BengaliUtils.getCurrentDateStr()) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("ঋণের কিস্তি জমা", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("সদস্য: ${loan.memberName} (${BengaliUtils.toBengaliDigits(loan.memberSerial)})", fontWeight = FontWeight.SemiBold)
-                Text("অবশিষ্ট ঋণ: ${BengaliUtils.formatTaka(loan.remainingLoan)}", color = ekotaDangerTextColor())
-
-                if (loan.missedInstallments > 0) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = ekotaBadgeWarningBg(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "পূর্বের বকেয়া: ${BengaliUtils.toBengaliDigits(loan.missedInstallments)}টি কিস্তি। ডাবল (${BengaliUtils.formatTaka(loan.weeklyInstallment * 2)}) দিলে বকেয়া কিস্তি সমন্বয় হবে (৳১০ জরিমানা আলাদা শিটে থাকবে)।",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ekotaWarningTextColor(),
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(8.dp)
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = amountText == singleAmt,
-                        onClick = { amountText = singleAmt },
-                        label = { Text("নির্ধারিত (১x)", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilterChip(
-                        selected = amountText == doubleAmt,
-                        onClick = { amountText = doubleAmt },
-                        label = { Text("ডাবল (২x)", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { input -> amountText = input.filter { it.isDigit() || it == '.' } },
-                    label = { Text("কিস্তির পরিমাণ (টাকা)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = dateText,
-                    onValueChange = { dateText = it },
-                    label = { Text("তারিখ (যেমন: dd/MM/yy)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val amount = amountText.toDoubleOrNull() ?: 0.0
-                    if (amount > 0) {
-                        onSave(amount, dateText)
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = EmeraldGreenPrimary,
-                    contentColor = Color.White
-                )
-            ) {
-                Text("জমা দিন")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("বাতিল") }
-        }
-    )
-}
-
-@Composable
-fun LoanHistoryDialog(
-    loan: Loan,
-    installmentHistory: List<LoanInstallment>,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "${loan.memberName} - কিস্তি পরিশোধ বিবরণী",
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleMedium
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "মোট পরিশোধযোগ্য: ${BengaliUtils.formatTaka(loan.totalPayable)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "অবশিষ্ট: ${BengaliUtils.formatTaka(loan.remainingLoan)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = ekotaDangerTextColor(),
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                }
-
-                HorizontalDivider()
-
-                Text("পরিশোধিত কিস্তিসমূহ:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-
-                if (installmentHistory.isEmpty()) {
-                    Text("এখনও কোনো কিস্তি জমা হয়নি", style = MaterialTheme.typography.bodyMedium)
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 260.dp)
-                    ) {
-                        items(installmentHistory) { inst ->
-                            val isMissedEntry = inst.isMissed || inst.amount <= 0.0
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "কিস্তি ${BengaliUtils.toBengaliDigits(inst.serialNumber)} (${inst.installmentDate})",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (isMissedEntry) ekotaDangerTextColor() else MaterialTheme.colorScheme.onSurface
-                                    )
-                                    if (inst.officerName.isNotBlank()) {
-                                        Text(
-                                            text = "জমাদানকারী: ${inst.officerName}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                Text(
-                                    text = if (isMissedEntry) "অনুপস্থিত (৳১০ জরিমানা)" else BengaliUtils.formatTaka(inst.amount),
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isMissedEntry) ekotaDangerTextColor() else MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("বন্ধ করুন") }
-        }
-    )
 }

@@ -45,6 +45,7 @@ fun StorageSettingsDialog(
     canEditQuota: Boolean,
     backupJsonProvider: () -> String,
     onRestoreBackupJson: ((String, (Int) -> Unit, (String) -> Unit) -> Unit)? = null,
+    onOpenGoogleDriveStorage: (() -> Unit)? = null,
     onLimitUpdated: (Long) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -387,6 +388,20 @@ fun StorageSettingsDialog(
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text("ফাইল রিস্টোর", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                                 }
+                            }
+                        }
+
+                        if (onOpenGoogleDriveStorage != null) {
+                            OutlinedButton(
+                                onClick = onOpenGoogleDriveStorage,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("open_google_drive_from_storage_button")
+                            ) {
+                                Icon(Icons.Default.AddToDrive, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Google Drive ডাটা স্টোরেজ (Add/Backup)", fontWeight = FontWeight.SemiBold)
                             }
                         }
 

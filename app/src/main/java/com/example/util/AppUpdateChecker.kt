@@ -14,10 +14,13 @@ data class AppUpdateInfo(
     val latestVersionName: String,
     val downloadUrl: String,
     val releaseNotes: String = "",
-    val sourceLabel: String = ""
+    val sourceLabel: String = "",
+    val permanentDownloadUrl: String = ""
 )
 
 object AppUpdateChecker {
+
+    const val PERMANENT_APK_ASSET_NAME = "Ekota-Samiti.apk"
 
     private val httpClient by lazy {
         OkHttpClient.Builder()
@@ -48,6 +51,37 @@ object AppUpdateChecker {
         }
 
         return null
+    }
+
+    fun resolveRepoSlug(
+        settings: AppSettings,
+        bundledRepoSlug: String = BuildConfig.GITHUB_REPO_SLUG
+    ): String? {
+        return extractGitHubRepoSlug(settings.githubRepoSlug)
+            ?: extractGitHubRepoSlug(settings.appDownloadUrl)
+            ?: extractGitHubRepoSlug(bundledRepoSlug)
+    }
+
+    /**
+     * Builds the permanent, never-changing direct APK download URL for GitHub Releases (`releases/latest/download/Ekota-Samiti.apk`).
+     */
+    fun buildPermanentApkUrl(repoSlug: String?): String {
+        val cleanSlug = extractGitHubRepoSlug(repoSlug) ?: return ""
+        return "https://github.com/$cleanSlug/releases/latest/download/$PERMANENT_APK_ASSET_NAME"
+    }
+
+    /**
+     * Resolves the unchanging download URL used for every update push so users never have to change links.
+     */
+    fun resolvePermanentApkUrl(
+        settings: AppSettings,
+        bundledRepoSlug: String = BuildConfig.GITHUB_REPO_SLUG
+    ): String {
+        val resolvedSlug = resolveRepoSlug(settings, bundledRepoSlug)
+        if (!resolvedSlug.isNullOrBlank() && (settings.keepPermanentLink || settings.appDownloadUrl.isBlank())) {
+            return buildPermanentApkUrl(resolvedSlug)
+        }
+        return settings.appDownloadUrl.trim()
     }
 
     /**
@@ -99,8 +133,13 @@ object AppUpdateChecker {
         currentVersionCode: Int = BuildConfig.VERSION_CODE,
         currentVersionName: String = BuildConfig.VERSION_NAME
     ): AppUpdateInfo? {
-        val url = settings.appDownloadUrl.trim()
-        if (url.isBlank()) return null
+        val rawUrl = settings.appDownloadUrl.trim()
+        val effectiveUrl = if (settings.keepPermanentLink) {
+            resolvePermanentApkUrl(settings, bundledRepoSlug = "").ifBlank { rawUrl }
+        } else {
+            rawUrl
+        }
+        if (effectiveUrl.isBlank()) return null
         val newer = isUpdateNewer(
             currentVersionCode = currentVersionCode,
             currentVersionName = currentVersionName,
@@ -111,9 +150,10 @@ object AppUpdateChecker {
         return AppUpdateInfo(
             latestVersionCode = settings.latestVersionCode.coerceAtLeast(currentVersionCode + 1),
             latestVersionName = settings.latestVersionName.ifBlank { "নতুন সংস্করণ" },
-            downloadUrl = url,
+            downloadUrl = effectiveUrl,
             releaseNotes = settings.updateNotes,
-            sourceLabel = "সমিতি সার্ভার"
+            sourceLabel = "সমিতি সার্ভার",
+            permanentDownloadUrl = effectiveUrl
         )
     }
 
@@ -152,12 +192,16 @@ object AppUpdateChecker {
                 return null
             }
 
+            val repoSlug = extractGitHubRepoSlug(finalUrl) ?: extractGitHubRepoSlug(htmlUrl)
+            val permanentUrl = buildPermanentApkUrl(repoSlug)
+
             AppUpdateInfo(
                 latestVersionCode = parsedCode,
                 latestVersionName = displayVerName,
                 downloadUrl = finalUrl,
                 releaseNotes = bodyNotes,
-                sourceLabel = "GitHub Release"
+                sourceLabel = "GitHub Release",
+                permanentDownloadUrl = permanentUrl
             )
         } catch (_: Exception) {
             null
@@ -171,19 +215,30 @@ object AppUpdateChecker {
         bundledRepoSlug: String = BuildConfig.GITHUB_REPO_SLUG
     ): AppUpdateInfo? {
         val settingsUpdate = evaluateSettingsUpdate(settings, currentVersionCode, currentVersionName)
-        val resolvedSlug = extractGitHubRepoSlug(settings.githubRepoSlug)
-            ?: extractGitHubRepoSlug(settings.appDownloadUrl)
-            ?: extractGitHubRepoSlug(bundledRepoSlug)
+        val resolvedSlug = resolveRepoSlug(settings, bundledRepoSlug)
 
         if (resolvedSlug.isNullOrBlank()) {
             return settingsUpdate
         }
 
-        val githubUpdate = fetchLatestGitHubRelease(
+        val permanentUrl = buildPermanentApkUrl(resolvedSlug)
+        val rawGithubUpdate = fetchLatestGitHubRelease(
             repoSlug = resolvedSlug,
             currentVersionCode = currentVersionCode,
             currentVersionName = currentVersionName
         )
+        val githubUpdate = rawGithubUpdate?.let { info ->
+            if (settings.keepPermanentLink && permanentUrl.isNotBlank()) {
+                info.copy(
+                    downloadUrl = permanentUrl,
+                    permanentDownloadUrl = permanentUrl
+                )
+            } else {
+                info.copy(
+                    permanentDownloadUrl = permanentUrl.ifBlank { info.permanentDownloadUrl }
+                )
+            }
+        }
 
         return when {
             githubUpdate != null && settingsUpdate != null -> {

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -19,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -43,376 +45,267 @@ fun MemberSavingsInputCard(
     isSubmittedThisWeek: Boolean = false,
     isPendingSync: Boolean = false,
     cardAccentIndex: Int = 0,
-    onAmountChange: (String) -> Unit
+    onAmountChange: (String) -> Unit,
+    onSubmitMember: (() -> Unit)? = null
 ) {
     val parsedAmount = amountText.toDoubleOrNull() ?: 0.0
     val isPaid = parsedAmount > 0.0
-    val defaultAmt = member.weeklySavingsAmount.toInt().toString()
-    val doubleAmt = (member.weeklySavingsAmount * 2).toInt().toString()
+    val isSubmitted = isSubmittedThisWeek || (existingRecord != null && existingRecord.status != "REJECTED")
     val isLocked = isSubmittedThisWeek || (!isAdmin && existingRecord != null && existingRecord.status != "REJECTED")
     val isDark = LocalIsDarkEkotaTheme.current
     val accent = VibrantCardAccents[cardAccentIndex % VibrantCardAccents.size]
-    val cardBgColor = when {
-        isDark -> MaterialTheme.colorScheme.surface
-        isLocked -> accent.softSurface
-        else -> accent.softSurface.copy(alpha = 0.65f)
-    }
-    val cardBorderColor = when {
-        isLocked -> accent.gradient.first().copy(alpha = 0.72f)
-        isPaid -> accent.gradient.first().copy(alpha = 0.50f)
-        else -> accent.gradient.first().copy(alpha = 0.30f)
+
+    val submittedBlueBg = if (isDark) Color(0xFF172554).copy(alpha = 0.78f) else Color(0xFFDBEAFE)
+    val submittedBluePrimary = if (isDark) Color(0xFF60A5FA) else Color(0xFF1D4ED8)
+    val submittedBlueInk = if (isDark) Color(0xFFBFDBFE) else Color(0xFF1E3A8A)
+    val submittedBluePillBg = CardBlueGradient.first()
+
+    val rowBgColor = when {
+        isSubmitted -> submittedBlueBg
+        isDark && cardAccentIndex % 2 == 1 -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+        !isDark && cardAccentIndex % 2 == 1 -> accent.softSurface.copy(alpha = 0.35f)
+        else -> MaterialTheme.colorScheme.surface
     }
 
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .background(rowBgColor)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
             .testTag("member_savings_card_${member.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = cardBgColor
-        ),
-        border = BorderStroke(
-            width = if (isLocked) 1.5.dp else 1.dp,
-            color = cardBorderColor
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        verticalAlignment = Alignment.CenterVertically
     ) {
+        // Column 1: SL (01, 02, ...)
+        Text(
+            text = BengaliUtils.formatTwoDigitSerial(member.memberSerial),
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = when {
+                isSubmitted -> submittedBlueInk
+                isDark -> accent.gradient.last()
+                else -> HeaderSlateNavy
+            },
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.width(40.dp)
+        )
+
+        Spacer(modifier = Modifier.width(6.dp))
+
+        // Column 2: নাম (Member Name + subtle inline status notes if needed)
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Vibrant Multi-Color Serial Number Badge
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(colors = accent.gradient)),
-                    contentAlignment = Alignment.Center
+            Text(
+                text = member.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isSubmitted) submittedBlueInk else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (existingRecord != null) {
+                val submitterName = existingRecord.officerName.ifBlank { "অ্যাডমিন" }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    modifier = Modifier.testTag("savings_submitted_by_${member.id}")
                 ) {
-                    Text(
-                        text = BengaliUtils.toBengaliDigits(member.memberSerial),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        maxLines = 1,
-                        softWrap = false
+                    Icon(
+                        imageVector = Icons.Default.PersonPin,
+                        contentDescription = "জমাদানকারী",
+                        tint = if (isSubmitted) submittedBluePrimary else accent.accentInk,
+                        modifier = Modifier.size(13.dp)
                     )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Member Name & Area Info
-                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = member.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (!isDark && isLocked) accent.accentInk else MaterialTheme.colorScheme.onSurface,
+                        text = "জমা: $submitterName",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isSubmitted) submittedBluePrimary else accent.accentInk,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = "${member.area.ifBlank { "যাদবপুর" }} • নির্ধারিত: ${BengaliUtils.formatTaka(member.weeklySavingsAmount)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (!isDark && isLocked) TextDark.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (existingRecord != null) {
-                        val submitterName = existingRecord.officerName.ifBlank { "অ্যাডমিন" }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.testTag("savings_submitted_by_${member.id}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PersonPin,
-                                contentDescription = "জমাদানকারী",
-                                tint = if (isDark) accent.gradient.last() else accent.accentInk,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "জমাদানকারী: $submitterName",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isDark) accent.gradient.last() else accent.accentInk,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Existing Saved Status Badge + Pending Offline Sync Badge
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    if (existingRecord != null) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (existingRecord.isPaid && existingRecord.amount > 0)
-                                ekotaBadgeSuccessBg()
-                            else
-                                ekotaBadgeDangerBg()
-                        ) {
-                            Text(
-                                text = if (existingRecord.isPaid && existingRecord.amount > 0)
-                                    "সংরক্ষিত: ${BengaliUtils.formatTaka(existingRecord.amount)}"
-                                else
-                                    "বাকি (-)",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                softWrap = false,
-                                color = if (existingRecord.isPaid && existingRecord.amount > 0)
-                                    ekotaSuccessTextColor()
-                                else
-                                    ekotaDangerTextColor(),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-
-                    if (isPendingSync) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = ekotaBadgeWarningBg(),
-                            modifier = Modifier.testTag("pending_sync_badge_${member.id}")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CloudUpload,
-                                    contentDescription = "সিঙ্ক বাকি",
-                                    tint = ekotaWarningTextColor(),
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = "সিঙ্ক বাকি",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    color = ekotaWarningTextColor()
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
             if (missedDatesCount > 0) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = ekotaBadgeDangerBg(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("missed_weeks_badge_${member.id}")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.WarningAmber,
-                            contentDescription = null,
-                            tint = ekotaDangerTextColor(),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "পূর্বের বকেয়া: ${BengaliUtils.toBengaliDigits(missedDatesCount)} সপ্তাহ (পরের সপ্তাহে ৳১০ জরিমানা প্রযোজ্য)",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = ekotaDangerTextColor()
-                        )
-                    }
-                }
+                Text(
+                    text = "বকেয়া: ${BengaliUtils.toBengaliDigits(missedDatesCount)} সপ্তাহ",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ekotaDangerTextColor(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("missed_weeks_badge_${member.id}")
+                )
             }
 
-            // Amount Input Field (full width when editable; inline lock badge when already submitted this week)
-            if (isLocked) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            if (isPendingSync) {
+                Text(
+                    text = "সিঙ্ক বাকি",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = ekotaWarningTextColor(),
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.testTag("pending_sync_badge_${member.id}")
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(6.dp))
+
+        // Column 3: টাকা (Inline entry cell directly under টাকা header)
+        if (isLocked) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (isDark) Color(0xFF1E3A8A) else Color(0xFFEFF6FF),
+                border = BorderStroke(1.25.dp, submittedBluePrimary),
+                modifier = Modifier
+                    .width(72.dp)
+                    .heightIn(min = 44.dp)
+                    .testTag("locked_savings_badge_${member.id}")
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 10.dp)
+                        .testTag("savings_amount_input_${member.id}"),
+                    contentAlignment = Alignment.CenterEnd
                 ) {
-                    OutlinedTextField(
+                    Text(
+                        text = amountText.ifBlank { "0" },
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = submittedBlueInk,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        } else {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White,
+                border = BorderStroke(
+                    width = 1.25.dp,
+                    color = when {
+                        !isPaid -> MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+                        isDark -> accent.gradient.last()
+                        else -> EmeraldGreenPrimary
+                    }
+                ),
+                modifier = Modifier
+                    .width(72.dp)
+                    .heightIn(min = 44.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    BasicTextField(
                         value = amountText,
-                        onValueChange = {},
-                        readOnly = true,
-                        enabled = false,
-                        label = { Text("সঞ্চয় (৳)") },
-                        prefix = {
-                            Text(
-                                text = "৳ ",
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        onValueChange = { input ->
+                            val normalized = buildString {
+                                for (ch in input) {
+                                    val ascii = when (ch) {
+                                        '০' -> '0'; '১' -> '1'; '২' -> '2'; '৩' -> '3'; '৪' -> '4'
+                                        '৫' -> '5'; '৬' -> '6'; '৭' -> '7'; '৮' -> '8'; '৯' -> '9'
+                                        else -> ch
+                                    }
+                                    if (ascii.isDigit() || ascii == '.') append(ascii)
+                                }
+                            }
+                            onAmountChange(normalized)
                         },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.End
+                        ),
+                        decorationBox = { innerTextField ->
+                            if (amountText.isEmpty()) {
+                                Text(
+                                    text = "0",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    textAlign = TextAlign.End,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            innerTextField()
+                        },
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("savings_amount_input_${member.id}"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            focusedLabelColor = MaterialTheme.colorScheme.primary,
-                            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-                            disabledBorderColor = accent.gradient.first().copy(alpha = 0.60f),
-                            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            disabledPrefixColor = MaterialTheme.colorScheme.primary,
-                            disabledContainerColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White
-                        )
+                            .fillMaxWidth()
+                            .testTag("savings_amount_input_${member.id}")
                     )
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (isSubmittedThisWeek) ekotaBadgeSuccessBg() else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.testTag("locked_savings_badge_${member.id}")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = if (isSubmittedThisWeek) Icons.Default.CheckCircle else Icons.Default.Lock,
-                                contentDescription = "এই সপ্তাহে জমা সম্পন্ন",
-                                tint = if (isSubmittedThisWeek) ekotaSuccessTextColor() else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isSubmittedThisWeek) "এই সপ্তাহে জমা ✓" else "শুধু অ্যাডমিন",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (isSubmittedThisWeek) ekotaSuccessTextColor() else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            } else {
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { input ->
-                        val filtered = input.filter { it.isDigit() || it == '.' }
-                        onAmountChange(filtered)
-                    },
-                    label = { Text("সঞ্চয় পরিমাণ (৳)") },
-                    prefix = {
-                        Text(
-                            text = "৳ ",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("savings_amount_input_${member.id}"),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White,
-                        unfocusedContainerColor = if (isDark) MaterialTheme.colorScheme.surfaceVariant else Color.White,
-                        focusedBorderColor = accent.gradient.first(),
-                        focusedLabelColor = accent.accentInk
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    FilledTonalButton(
-                        onClick = { onAmountChange(defaultAmt) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("preset_default_btn_${member.id}"),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = if (amountText == defaultAmt) EmeraldGreenPrimary else MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = if (amountText == defaultAmt) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = BengaliUtils.formatTaka(member.weeklySavingsAmount),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    FilledTonalButton(
-                        onClick = { onAmountChange(doubleAmt) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("preset_double_btn_${member.id}"),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = if (amountText == doubleAmt) NavyBlueSecondary else MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = if (amountText == doubleAmt) Color.White else MaterialTheme.colorScheme.onSecondaryContainer
-                        ),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = "২x ডাবল",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    FilledTonalButton(
-                        onClick = { onAmountChange("0") },
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("preset_zero_btn_${member.id}"),
-                        colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = if (amountText == "0" || amountText.isBlank()) ekotaBadgeDangerBg() else MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = if (amountText == "0" || amountText.isBlank()) ekotaDangerTextColor() else MaterialTheme.colorScheme.onSurface
-                        ),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = "বাকি (০৳)",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
                 }
             }
+        }
 
-            if (parsedAmount > member.weeklySavingsAmount && missedDatesCount > 0) {
-                Text(
-                    text = "ডাবল/অতিরিক্ত জমা পূর্বের বকেয়া সপ্তাহে স্বয়ংক্রিয়ভাবে কাউন্ট হবে",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
+        // Column 4: Per-Member Submit / Submitted Blue Status Button
+        if (onSubmitMember != null || isLocked) {
+            Spacer(modifier = Modifier.width(6.dp))
+            if (isLocked) {
+                Button(
+                    onClick = {},
+                    enabled = false,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        disabledContainerColor = submittedBluePillBg,
+                        disabledContentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .width(86.dp)
+                        .heightIn(min = 48.dp)
+                        .testTag("submitted_member_badge_${member.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "সাবমিট সম্পন্ন",
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "জমা ✓",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            } else {
+                Button(
+                    onClick = { onSubmitMember?.invoke() },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = EmeraldGreenPrimary,
+                        contentColor = Color.White
+                    ),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .width(86.dp)
+                        .heightIn(min = 48.dp)
+                        .testTag("submit_member_savings_${member.id}")
+                ) {
+                    Text(
+                        text = "সাবমিট",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
         }
     }
@@ -460,7 +353,7 @@ fun WeeklySavingsMatrixTable(
                             .background(HeaderSlateNavy),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TableCell(text = "ক্রমিক", width = 64.dp, isHeader = true)
+                        TableCell(text = "SL", width = 64.dp, isHeader = true)
                         TableCell(text = "নাম", width = 128.dp, isHeader = true, textAlign = TextAlign.Start)
                     }
 
@@ -479,7 +372,7 @@ fun WeeklySavingsMatrixTable(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             TableCell(
-                                text = BengaliUtils.toBengaliDigits(member.memberSerial),
+                                text = BengaliUtils.formatTwoDigitSerial(member.memberSerial),
                                 width = 64.dp,
                                 fontWeight = FontWeight.Bold,
                                 textColor = MaterialTheme.colorScheme.primary
@@ -582,7 +475,12 @@ fun WeeklySavingsMatrixTable(
                                 val amount = record?.amount ?: 0.0
                                 val isPaid = record != null && record.isPaid && amount > 0.0
                                 val displayText = if (isPaid) BengaliUtils.toBengaliDigits(amount.toInt()) else "-"
-                                val textColor = if (isPaid) MaterialTheme.colorScheme.onPrimaryContainer else ekotaDangerTextColor()
+                                val isDarkTheme = LocalIsDarkEkotaTheme.current
+                                val textColor = when {
+                                    isPaid && isDarkTheme -> Color(0xFFBFDBFE)
+                                    isPaid -> Color(0xFF1E3A8A)
+                                    else -> ekotaDangerTextColor()
+                                }
 
                                 Box(
                                     modifier = Modifier
@@ -594,10 +492,14 @@ fun WeeklySavingsMatrixTable(
                                 ) {
                                     Surface(
                                         shape = RoundedCornerShape(6.dp),
-                                        color = if (isPaid) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f) else MaterialTheme.colorScheme.surfaceVariant,
+                                        color = when {
+                                            isPaid && isDarkTheme -> Color(0xFF1E3A8A)
+                                            isPaid -> Color(0xFFDBEAFE)
+                                            else -> MaterialTheme.colorScheme.surfaceVariant
+                                        },
                                         border = BorderStroke(
-                                            0.5.dp,
-                                            if (isPaid) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                                            0.75.dp,
+                                            if (isPaid) Color(0xFF1E4FD6) else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                                         ),
                                         modifier = Modifier.fillMaxSize()
                                     ) {
@@ -809,6 +711,7 @@ fun AddCollectionDateDialog(
     onAdd: (String) -> Unit
 ) {
     var newDate by remember { mutableStateOf(BengaliUtils.getCurrentDateStr()) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -818,20 +721,40 @@ fun AddCollectionDateDialog(
                 Text("চলতি সময়কাল: $currentMonthHeading", style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = newDate,
-                    onValueChange = { newDate = it },
+                    onValueChange = {
+                        newDate = it
+                        errorMsg = null
+                    },
                     label = { Text("তারিখ (যেমন: 12/11/26)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_collection_date_input")
                 )
+                errorMsg?.let { err ->
+                    Text(
+                        text = err,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ekotaDangerTextColor()
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (newDate.isNotBlank()) onAdd(newDate.trim()) },
+                onClick = {
+                    val clean = newDate.trim()
+                    if (clean.isEmpty() || com.example.util.SavingsAndFineCalculator.parseDateMillis(clean) == null) {
+                        errorMsg = "সঠিক তারিখ দিন (যেমন: 12/11/26)"
+                    } else {
+                        onAdd(com.example.util.SavingsAndFineCalculator.normalizeDateStr(clean))
+                    }
+                },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = EmeraldGreenPrimary,
                     contentColor = Color.White
-                )
+                ),
+                modifier = Modifier.testTag("confirm_add_date_button")
             ) {
                 Text("যোগ করুন")
             }
@@ -889,7 +812,7 @@ fun EditCollectionDateDialog(
                     if (clean.isEmpty() || com.example.util.SavingsAndFineCalculator.parseDateMillis(clean) == null) {
                         errorMsg = "সঠিক তারিখ দিন (যেমন: 14/11/26)"
                     } else {
-                        onSave(clean)
+                        onSave(com.example.util.SavingsAndFineCalculator.normalizeDateStr(clean))
                     }
                 },
                 colors = ButtonDefaults.buttonColors(

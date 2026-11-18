@@ -20,6 +20,9 @@ class LocalDataStore(context: Context) {
         private const val KEY_LEDGER = "fund_ledger"
         private const val KEY_SETTINGS = "app_settings"
         private const val KEY_ADMIN_NOTIFS = "admin_notifications"
+        private const val KEY_SELECTED_SAVINGS_DATE = "selected_savings_date"
+        private const val KEY_SELECTED_LOAN_DATE = "selected_loan_date"
+        private const val KEY_SELECTED_FINE_DATE = "selected_fine_date"
     }
 
     fun loadMembers(): List<Member> {
@@ -62,7 +65,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_MEMBERS, arr.toString()).apply()
+        prefs.edit().putString(KEY_MEMBERS, arr.toString()).commit()
     }
 
     fun loadSavings(): List<SavingsRecord> {
@@ -105,7 +108,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_SAVINGS, arr.toString()).apply()
+        prefs.edit().putString(KEY_SAVINGS, arr.toString()).commit()
     }
 
     fun loadCollectionPeriods(): List<CollectionPeriod> {
@@ -134,7 +137,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_PERIODS, arr.toString()).apply()
+        prefs.edit().putString(KEY_PERIODS, arr.toString()).commit()
     }
 
     fun loadLoans(): List<Loan> {
@@ -183,7 +186,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_LOANS, arr.toString()).apply()
+        prefs.edit().putString(KEY_LOANS, arr.toString()).commit()
     }
 
     fun loadLoanInstallments(): List<LoanInstallment> {
@@ -228,7 +231,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_INSTALLMENTS, arr.toString()).apply()
+        prefs.edit().putString(KEY_INSTALLMENTS, arr.toString()).commit()
     }
 
     fun loadFines(): List<FineRecord> {
@@ -277,7 +280,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_FINES, arr.toString()).apply()
+        prefs.edit().putString(KEY_FINES, arr.toString()).commit()
     }
 
     fun loadFundLedger(): List<FundLedgerEntry> {
@@ -314,7 +317,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_LEDGER, arr.toString()).apply()
+        prefs.edit().putString(KEY_LEDGER, arr.toString()).commit()
     }
 
     fun loadAppSettings(): AppSettings {
@@ -332,6 +335,8 @@ class LocalDataStore(context: Context) {
                 latestVersionName = obj.optString("latestVersionName", ""),
                 updateNotes = obj.optString("updateNotes", ""),
                 githubRepoSlug = obj.optString("githubRepoSlug", ""),
+                autoUpdateEnabled = obj.optBoolean("autoUpdateEnabled", true),
+                keepPermanentLink = obj.optBoolean("keepPermanentLink", true),
                 updatedBy = obj.optString("updatedBy")
             )
         } catch (_: Exception) {
@@ -351,9 +356,11 @@ class LocalDataStore(context: Context) {
             put("latestVersionName", settings.latestVersionName)
             put("updateNotes", settings.updateNotes)
             put("githubRepoSlug", settings.githubRepoSlug)
+            put("autoUpdateEnabled", settings.autoUpdateEnabled)
+            put("keepPermanentLink", settings.keepPermanentLink)
             put("updatedBy", settings.updatedBy)
         }
-        prefs.edit().putString(KEY_SETTINGS, obj.toString()).apply()
+        prefs.edit().putString(KEY_SETTINGS, obj.toString()).commit()
     }
 
     fun mergeRestoredBackup(data: ParsedBackupData) {
@@ -446,7 +453,7 @@ class LocalDataStore(context: Context) {
                 }
             )
         }
-        prefs.edit().putString(KEY_ADMIN_NOTIFS, arr.toString()).apply()
+        prefs.edit().putString(KEY_ADMIN_NOTIFS, arr.toString()).commit()
     }
 
     fun clearMigratedKeys(includeAdminKeys: Boolean) {
@@ -461,8 +468,32 @@ class LocalDataStore(context: Context) {
                 .remove(KEY_LOANS)
                 .remove(KEY_LEDGER)
                 .remove(KEY_ADMIN_NOTIFS)
+                .remove(KEY_SELECTED_SAVINGS_DATE)
+                .remove(KEY_SELECTED_LOAN_DATE)
+                .remove(KEY_SELECTED_FINE_DATE)
         }
-        editor.apply()
+        editor.commit()
+    }
+
+    fun loadSelectedSavingsDate(): String =
+        prefs.getString(KEY_SELECTED_SAVINGS_DATE, "") ?: ""
+
+    fun saveSelectedSavingsDate(date: String) {
+        prefs.edit().putString(KEY_SELECTED_SAVINGS_DATE, date).commit()
+    }
+
+    fun loadSelectedLoanDate(): String =
+        prefs.getString(KEY_SELECTED_LOAN_DATE, "") ?: ""
+
+    fun saveSelectedLoanDate(date: String) {
+        prefs.edit().putString(KEY_SELECTED_LOAN_DATE, date).commit()
+    }
+
+    fun loadSelectedFineDate(): String =
+        prefs.getString(KEY_SELECTED_FINE_DATE, "") ?: ""
+
+    fun saveSelectedFineDate(date: String) {
+        prefs.edit().putString(KEY_SELECTED_FINE_DATE, date).commit()
     }
 
     fun clearAllData() {

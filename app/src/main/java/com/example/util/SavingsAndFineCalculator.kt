@@ -35,16 +35,11 @@ object SavingsAndFineCalculator {
     const val DEFAULT_WEEKLY_FINE_AMOUNT = 10.0
 
     fun parseDateMillis(dateStr: String): Long? {
-        val trimmed = dateStr.trim()
-        if (trimmed.isEmpty()) return null
-        val sdf = SimpleDateFormat("dd/MM/yy", Locale.US).apply {
-            isLenient = false
-        }
-        return try {
-            sdf.parse(trimmed)?.time
-        } catch (_: Exception) {
-            null
-        }
+        return DailyAccountCalculator.parseFlexibleDateMillis(dateStr)
+    }
+
+    fun normalizeDateStr(dateStr: String): String {
+        return DailyAccountCalculator.normalizeDateKey(dateStr)
     }
 
     fun sortDateStrings(dates: List<String>): List<String> {

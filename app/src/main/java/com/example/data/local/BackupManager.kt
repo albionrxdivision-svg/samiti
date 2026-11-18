@@ -216,6 +216,8 @@ object BackupManager {
                     put("latestVersionName", appSettings.latestVersionName)
                     put("updateNotes", appSettings.updateNotes)
                     put("githubRepoSlug", appSettings.githubRepoSlug)
+                    put("autoUpdateEnabled", appSettings.autoUpdateEnabled)
+                    put("keepPermanentLink", appSettings.keepPermanentLink)
                     put("updatedBy", appSettings.updatedBy)
                 }
             )
@@ -366,6 +368,8 @@ object BackupManager {
                     latestVersionName = s.optString("latestVersionName", ""),
                     updateNotes = s.optString("updateNotes", ""),
                     githubRepoSlug = s.optString("githubRepoSlug", ""),
+                    autoUpdateEnabled = s.optBoolean("autoUpdateEnabled", true),
+                    keepPermanentLink = s.optBoolean("keepPermanentLink", true),
                     updatedBy = s.optString("updatedBy")
                 )
             }

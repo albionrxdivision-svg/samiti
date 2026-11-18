@@ -81,206 +81,200 @@ fun DepositLedgerScreen(
             )
         }
     ) { paddingValues ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
                 .background(ekotaSilverBackgroundBrush())
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .testTag("daily_hisab_list"),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Overall Summary Card
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("hisab_summary_card")
-            ) {
-                Box(
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Brush.linearGradient(colors = CardTealGradient))
+                        .testTag("hisab_summary_card")
                 ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Brush.linearGradient(colors = CardTealGradient))
                     ) {
-                        Text(
-                            text = "সর্বমোট জমা (বর্তমান ব্যালেন্স)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.95f)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = BengaliUtils.formatTaka(hisabOverview.currentNetBalance),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.28f))
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            HisabSummaryStatColumn(
-                                label = "মোট সঞ্চয়",
-                                amount = hisabOverview.totalSavings,
-                                modifier = Modifier.weight(1f)
+                            Text(
+                                text = "সর্বমোট জমা (বর্তমান ব্যালেন্স)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.95f)
                             )
-                            HisabSummaryStatColumn(
-                                label = "মোট ঋণ আদায়",
-                                amount = hisabOverview.totalLoanCollected,
-                                modifier = Modifier.weight(1f)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = BengaliUtils.formatTaka(hisabOverview.currentNetBalance),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            HisabSummaryStatColumn(
-                                label = "বাইরে গেছে",
-                                amount = hisabOverview.totalWentOut,
-                                modifier = Modifier.weight(1f)
-                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.28f))
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                HisabSummaryStatColumn(
+                                    label = "মোট সঞ্চয়",
+                                    amount = hisabOverview.totalSavings,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                HisabSummaryStatColumn(
+                                    label = "মোট ঋণ আদায়",
+                                    amount = hisabOverview.totalLoanCollected,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                HisabSummaryStatColumn(
+                                    label = "বাইরে গেছে",
+                                    amount = hisabOverview.totalWentOut,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
             // Mode switcher chips: Date-wise Summary List vs Detailed Ledger
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.CalendarMonth,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    label = {
-                        Text(
-                            text = "তারিখ অনুযায়ী হিসাব",
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = HeaderSlateNavy,
-                        selectedLabelColor = Color.White,
-                        selectedLeadingIconColor = Color.White
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("hisab_tab_daily")
-                )
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.CalendarMonth,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "তারিখ অনুযায়ী হিসাব",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = HeaderSlateNavy,
+                            selectedLabelColor = Color.White,
+                            selectedLeadingIconColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("hisab_tab_daily")
+                    )
 
-                FilterChip(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.ReceiptLong,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    label = {
-                        Text(
-                            text = "বিস্তারিত লেনদেন",
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = HeaderSlateNavy,
-                        selectedLabelColor = Color.White,
-                        selectedLeadingIconColor = Color.White
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("hisab_tab_detailed")
-                )
+                    FilterChip(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.ReceiptLong,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = "বিস্তারিত লেনদেন",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = HeaderSlateNavy,
+                            selectedLabelColor = Color.White,
+                            selectedLeadingIconColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("hisab_tab_detailed")
+                    )
+                }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             if (selectedTab == 0) {
                 if (hisabOverview.summariesNewestFirst.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Default.EventNote,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                modifier = Modifier.size(44.dp)
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.EventNote,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(44.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "এখনো কোনো তারিখের সঞ্চয় বা ঋণের হিসাব এন্ট্রি হয়নি",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(
+                        items = hisabOverview.summariesNewestFirst,
+                        key = { it.dateKey }
+                    ) { summary ->
+                        DailyHisabDateCard(
+                            summary = summary,
+                            showRunningBalance = hisabOverview.summariesNewestFirst.size > 1
+                        )
+                    }
+                }
+            } else {
+                if (ledgerEntries.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text(
-                                text = "এখনো কোনো তারিখের সঞ্চয় বা ঋণের হিসাব এন্ট্রি হয়নি",
+                                text = "এখনো কোনো লেনদেন এন্ট্রি করা হয়নি",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(bottom = 18.dp),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("daily_hisab_list")
-                    ) {
-                        items(
-                            items = hisabOverview.summariesNewestFirst,
-                            key = { it.dateKey }
-                        ) { summary ->
-                            DailyHisabDateCard(
-                                summary = summary,
-                                showRunningBalance = hisabOverview.summariesNewestFirst.size > 1
-                            )
-                        }
-                    }
-                }
-            } else {
-                if (ledgerEntries.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "এখনো কোনো লেনদেন এন্ট্রি করা হয়নি",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(bottom = 18.dp),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("detailed_ledger_list")
-                    ) {
-                        items(ledgerEntries.reversed()) { entry ->
-                            LedgerEntryCard(entry = entry)
-                        }
+                    items(ledgerEntries.reversed()) { entry ->
+                        LedgerEntryCard(entry = entry)
                     }
                 }
             }

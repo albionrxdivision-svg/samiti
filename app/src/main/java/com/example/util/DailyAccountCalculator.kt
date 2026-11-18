@@ -75,8 +75,15 @@ object DailyAccountCalculator {
             .replace('.', '/')
         if (ascii.isBlank()) return null
 
-        val patterns = listOf("dd/MM/yyyy", "dd/MM/yy", "d/M/yyyy", "d/M/yy", "yyyy/MM/dd")
-        for (pattern in patterns) {
+        val parts = ascii.split("/")
+        val candidatePatterns = when {
+            parts.size == 3 && parts[0].length == 4 -> listOf("yyyy/MM/dd", "yyyy/M/d")
+            parts.size == 3 && parts[2].length == 4 -> listOf("dd/MM/yyyy", "d/M/yyyy")
+            parts.size == 3 && parts[2].length == 2 -> listOf("dd/MM/yy", "d/M/yy")
+            else -> listOf("dd/MM/yy", "dd/MM/yyyy", "d/M/yy", "d/M/yyyy", "yyyy/MM/dd")
+        }
+
+        for (pattern in candidatePatterns) {
             try {
                 val sdf = SimpleDateFormat(pattern, Locale.US).apply {
                     isLenient = false

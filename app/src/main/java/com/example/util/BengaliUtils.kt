@@ -40,6 +40,35 @@ object BengaliUtils {
         return "৳" + toBengaliDigits(amount)
     }
 
+    fun formatTwoDigitSerial(serial: String): String {
+        val trimmed = serial.trim()
+        if (trimmed.isEmpty()) return "00"
+        val ascii = StringBuilder(trimmed.length)
+        for (ch in trimmed) {
+            ascii.append(
+                when (ch) {
+                    '০' -> '0'; '১' -> '1'; '২' -> '2'; '৩' -> '3'; '৪' -> '4'
+                    '৫' -> '5'; '৬' -> '6'; '৭' -> '7'; '৮' -> '8'; '৯' -> '9'
+                    else -> ch
+                }
+            )
+        }
+        val num = ascii.toString().toIntOrNull()
+        return if (num != null && num >= 0) {
+            num.toString().padStart(2, '0')
+        } else {
+            trimmed
+        }
+    }
+
+    fun formatCleanAmount(amount: Double): String {
+        return if (amount % 1.0 == 0.0) {
+            amount.toLong().toString()
+        } else {
+            DecimalFormat("#.##").format(amount)
+        }
+    }
+
     fun getCurrentDateStr(): String {
         val sdf = SimpleDateFormat("dd/MM/yy", Locale.US)
         return sdf.format(Date())

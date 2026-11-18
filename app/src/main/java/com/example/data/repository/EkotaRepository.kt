@@ -232,6 +232,12 @@ class EkotaRepository(
     fun saveLocalAppSettings(settings: AppSettings) { localStore?.saveAppSettings(settings) }
     fun loadLocalAdminNotifications(): List<AdminNotification> = localStore?.loadAdminNotifications() ?: emptyList()
     fun saveLocalAdminNotifications(list: List<AdminNotification>) { localStore?.saveAdminNotifications(list) }
+    fun loadSelectedSavingsDate(): String = localStore?.loadSelectedSavingsDate() ?: ""
+    fun saveSelectedSavingsDate(date: String) { localStore?.saveSelectedSavingsDate(date) }
+    fun loadSelectedLoanDate(): String = localStore?.loadSelectedLoanDate() ?: ""
+    fun saveSelectedLoanDate(date: String) { localStore?.saveSelectedLoanDate(date) }
+    fun loadSelectedFineDate(): String = localStore?.loadSelectedFineDate() ?: ""
+    fun saveSelectedFineDate(date: String) { localStore?.saveSelectedFineDate(date) }
     fun mergeRestoredLocalBackup(data: ParsedBackupData) { localStore?.mergeRestoredBackup(data) }
     fun clearAllLocalData() { localStore?.clearAllData() }
 
@@ -793,7 +799,8 @@ class EkotaRepository(
                 moneyIn = amount,
                 moneyOut = 0.0,
                 referenceId = docId,
-                type = LedgerType.SAVINGS_COLLECTION.name
+                type = LedgerType.SAVINGS_COLLECTION.name,
+                docId = "ledger_$docId"
             )
         }
     }
@@ -837,13 +844,16 @@ class EkotaRepository(
             newVal = "${recordsToWrite.size} entries, Net Cash: ৳$netNewCashCollected ($status)"
         )
         if (status == TransactionStatus.APPROVED.name && netNewCashCollected > 0.0) {
+            val cleanRef = primaryDate.replace("/", "-")
+            val ledgerDocId = if (recordsToWrite.size == 1) "ledger_${recordsToWrite.first().id}" else "ledger_batch_$cleanRef"
             appendLedgerEntry(
                 date = primaryDate,
                 description = "$primaryDate সাপ্তাহিক সঞ্চয় আদায়",
                 moneyIn = netNewCashCollected,
                 moneyOut = 0.0,
-                referenceId = primaryDate.replace("/", "-"),
-                type = LedgerType.SAVINGS_COLLECTION.name
+                referenceId = cleanRef,
+                type = LedgerType.SAVINGS_COLLECTION.name,
+                docId = ledgerDocId
             )
         }
     }
@@ -922,7 +932,8 @@ class EkotaRepository(
                 moneyIn = record.amount,
                 moneyOut = 0.0,
                 referenceId = record.id,
-                type = LedgerType.SAVINGS_COLLECTION.name
+                type = LedgerType.SAVINGS_COLLECTION.name,
+                docId = "ledger_app_${record.id}"
             )
         }
     }
@@ -949,15 +960,18 @@ class EkotaRepository(
     suspend fun addCollectionPeriod(dateStr: String, monthYear: String) {
         val uid = requireUserId()
         val path = "collectionPeriods"
+        val cleanDate = com.example.util.DailyAccountCalculator.normalizeDateKey(dateStr)
+        val docId = "period_${cleanDate.replace("/", "-")}"
         val payload = mapOf(
-            "dateStr" to dateStr,
+            "dateStr" to cleanDate,
             "monthYear" to monthYear,
             "isClosed" to false,
             "totalSavings" to 0.0,
+            "createdBy" to uid,
             "createdAt" to FieldValue.serverTimestamp()
         )
-        awaitWriteOfflineSafe(db.collection(path).document().set(payload), OperationType.CREATE, path)
-        logAudit("ADD_COLLECTION_PERIOD", "collectionPeriods", dateStr, "", monthYear)
+        awaitWriteOfflineSafe(db.collection(path).document(docId).set(payload), OperationType.CREATE, path)
+        logAudit("ADD_COLLECTION_PERIOD", "collectionPeriods", cleanDate, "", monthYear)
     }
 
     suspend fun updateCollectionPeriodDate(
@@ -1059,7 +1073,7 @@ class EkotaRepository(
     suspend fun createLoan(loan: Loan): String {
         val uid = requireUserId()
         val path = "loans"
-        val docRef = db.collection(path).document()
+        val docRef = if (loan.id.isNotBlank()) db.collection(path).document(loan.id) else db.collection(path).document()
         val totalPayable = com.example.util.LoanCalculator.calculateTotalPayable(loan.principal, loan.interest)
         val remaining = totalPayable
         val nextDate = loan.nextInstallmentDate.ifBlank { BengaliUtils.addDaysToDateStr(loan.loanDate, 7) }
@@ -1090,7 +1104,8 @@ class EkotaRepository(
             moneyIn = 0.0,
             moneyOut = loan.principal,
             referenceId = docRef.id,
-            type = LedgerType.LOAN_DISBURSEMENT.name
+            type = LedgerType.LOAN_DISBURSEMENT.name,
+            docId = "ledger_${docRef.id}"
         )
         return docRef.id
     }
@@ -1149,15 +1164,16 @@ class EkotaRepository(
                 moneyIn = amount,
                 moneyOut = 0.0,
                 referenceId = docRef.id,
-                type = LedgerType.LOAN_INSTALLMENT.name
+                type = LedgerType.LOAN_INSTALLMENT.name,
+                docId = "ledger_${docRef.id}"
             )
         }
     }
 
-    suspend fun recordMissedLoanInstallment(loan: Loan, missedDate: String) {
+    suspend fun recordMissedLoanInstallment(loan: Loan, missedDate: String, docId: String = "") {
         val uid = requireUserId()
         val path = "loanInstallments"
-        val docRef = db.collection(path).document()
+        val docRef = if (docId.isNotBlank()) db.collection(path).document(docId) else db.collection(path).document()
         val countSnap = try {
             getQueryOfflineSafe(db.collection(path).whereEqualTo("loanId", loan.id), path)
         } catch (_: Exception) {
@@ -1217,7 +1233,8 @@ class EkotaRepository(
             moneyIn = installment.amount,
             moneyOut = 0.0,
             referenceId = installment.id,
-            type = LedgerType.LOAN_INSTALLMENT.name
+            type = LedgerType.LOAN_INSTALLMENT.name,
+            docId = "ledger_app_${installment.id}"
         )
     }
 
@@ -1385,7 +1402,8 @@ class EkotaRepository(
         moneyIn: Double,
         moneyOut: Double,
         referenceId: String = "",
-        type: String = LedgerType.DEPOSIT.name
+        type: String = LedgerType.DEPOSIT.name,
+        docId: String = ""
     ) {
         val uid = auth.currentUser?.uid ?: "system"
         val path = "fundLedger"
@@ -1415,8 +1433,9 @@ class EkotaRepository(
             "createdAt" to FieldValue.serverTimestamp()
         )
         try {
-            awaitWriteOfflineSafe(db.collection(path).document().set(payload), OperationType.CREATE, path)
-            logAudit("LEDGER_ENTRY", "fundLedger", "", "", "$description (Bal: ৳$currentBalance)")
+            val docRef = if (docId.isNotBlank()) db.collection(path).document(docId) else db.collection(path).document()
+            awaitWriteOfflineSafe(docRef.set(payload), OperationType.CREATE, path)
+            logAudit("LEDGER_ENTRY", "fundLedger", docRef.id, "", "$description (Bal: ৳$currentBalance)")
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, path)
         }
@@ -1477,6 +1496,8 @@ class EkotaRepository(
             "latestVersionName" to settings.latestVersionName,
             "updateNotes" to settings.updateNotes,
             "githubRepoSlug" to settings.githubRepoSlug,
+            "autoUpdateEnabled" to settings.autoUpdateEnabled,
+            "keepPermanentLink" to settings.keepPermanentLink,
             "updatedBy" to uid,
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -1598,7 +1619,6 @@ class EkotaRepository(
         if (totalCount == 0) return 0
 
         writeBackupDataToFirestore(data = data, uid = uid, includeAdminCollections = isAdmin, auditPath = "local_migration")
-        store.clearMigratedKeys(includeAdminKeys = isAdmin)
         return totalCount
     }
 
@@ -1799,6 +1819,8 @@ class EkotaRepository(
                             "latestVersionName" to s.latestVersionName,
                             "updateNotes" to s.updateNotes,
                             "githubRepoSlug" to s.githubRepoSlug,
+                            "autoUpdateEnabled" to s.autoUpdateEnabled,
+                            "keepPermanentLink" to s.keepPermanentLink,
                             "updatedBy" to uid,
                             "updatedAt" to FieldValue.serverTimestamp()
                         ),

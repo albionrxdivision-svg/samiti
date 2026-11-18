@@ -3,12 +3,14 @@ package com.example
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.BackupManager
 import com.example.data.local.LocalDataStore
@@ -31,6 +33,7 @@ import com.example.data.repository.EkotaRepository
 import com.example.ui.MainViewModel
 import com.example.ui.navigation.MainAppNavigation
 import com.example.ui.settings.ApkManagementDialog
+import com.example.ui.settings.SettingsScreen
 import com.example.ui.theme.EkotaSamitiTheme
 import com.example.util.AppUpdateChecker
 import com.example.util.AppUpdateInfo
@@ -132,6 +135,10 @@ class AppUpdateAndBackupTest {
             "https://github.com/nitai/ekota-samiti/releases/download/v1.0.25/Ekota-Samiti.apk",
             newer.downloadUrl
         )
+        assertEquals(
+            "https://github.com/nitai/ekota-samiti/releases/latest/download/Ekota-Samiti.apk",
+            newer.permanentDownloadUrl
+        )
 
         // Same or older version should not trigger update notice
         val notNewer = AppUpdateChecker.parseGitHubReleaseJson(
@@ -140,6 +147,30 @@ class AppUpdateAndBackupTest {
             currentVersionName = "1.0.25"
         )
         assertNull(notNewer)
+    }
+
+    @Test
+    fun permanentApkUrlRemainsUnchangedAcrossGitHubPushes() {
+        val fromBundledCi = AppUpdateChecker.resolvePermanentApkUrl(
+            settings = AppSettings(),
+            bundledRepoSlug = "nitai/ekota-samiti"
+        )
+        assertEquals(
+            "https://github.com/nitai/ekota-samiti/releases/latest/download/Ekota-Samiti.apk",
+            fromBundledCi
+        )
+
+        val normalizedVersionedUrl = AppUpdateChecker.resolvePermanentApkUrl(
+            settings = AppSettings(
+                appDownloadUrl = "https://github.com/nitai/ekota-samiti/releases/download/v1.0.12/Ekota-Samiti.apk",
+                keepPermanentLink = true
+            ),
+            bundledRepoSlug = ""
+        )
+        assertEquals(
+            "https://github.com/nitai/ekota-samiti/releases/latest/download/Ekota-Samiti.apk",
+            normalizedVersionedUrl
+        )
     }
 
     @Test
@@ -229,7 +260,9 @@ class AppUpdateAndBackupTest {
         val customSettings = AppSettings(
             orgName = "একতা সঞ্চয় সমিতি",
             interestRatePercent = 15.0,
-            githubRepoSlug = "nitai/ekota-samiti"
+            githubRepoSlug = "nitai/ekota-samiti",
+            autoUpdateEnabled = false,
+            keepPermanentLink = true
         )
 
         dataStore.saveMembers(listOf(member))
@@ -248,6 +281,8 @@ class AppUpdateAndBackupTest {
         val parsed = BackupManager.parseBackupJson(exportedJson).getOrThrow()
         assertEquals(7, parsed.totalRecordsCount)
         assertEquals("একতা সঞ্চয় সমিতি", parsed.appSettings?.orgName)
+        assertFalse(parsed.appSettings?.autoUpdateEnabled ?: true)
+        assertTrue(parsed.appSettings?.keepPermanentLink ?: false)
 
         // 2. Simulate full uninstall + fresh reinstall (wipe local storage completely)
         dataStore.clearAllData()
@@ -311,14 +346,16 @@ class AppUpdateAndBackupTest {
     }
 
     @Test
-    fun apkManagementDialogDisplaysInstalledVersionAndUpdateBanner() {
+    fun apkManagementDialogDisplaysInstalledVersionAutoUpdateToggleAndPermanentLink() {
         var checkTriggered = false
+        var toggledState: Boolean? = null
         val updateInfo = AppUpdateInfo(
             latestVersionCode = 99,
             latestVersionName = "2.5.0",
-            downloadUrl = "https://github.com/nitai/ekota/releases/download/v2.5.0/Ekota-Samiti.apk",
+            downloadUrl = "https://github.com/nitai/ekota/releases/latest/download/Ekota-Samiti.apk",
             releaseNotes = "দ্রুত পারফরম্যান্স ও অটো-আপডেট",
-            sourceLabel = "GitHub Release"
+            sourceLabel = "GitHub Release",
+            permanentDownloadUrl = "https://github.com/nitai/ekota/releases/latest/download/Ekota-Samiti.apk"
         )
 
         composeTestRule.setContent {
@@ -326,11 +363,14 @@ class AppUpdateAndBackupTest {
                 ApkManagementDialog(
                     settings = AppSettings(
                         appDownloadUrl = "https://github.com/nitai/ekota/releases/latest",
-                        githubRepoSlug = "nitai/ekota"
+                        githubRepoSlug = "nitai/ekota",
+                        autoUpdateEnabled = true,
+                        keepPermanentLink = true
                     ),
                     isAdmin = true,
                     availableUpdate = updateInfo,
                     isCheckingUpdate = false,
+                    onToggleAutoUpdate = { toggledState = it },
                     onCheckUpdate = { checkTriggered = true },
                     onDismiss = {},
                     onSaveSettings = { _, onDone -> onDone(true, "saved") }
@@ -338,10 +378,45 @@ class AppUpdateAndBackupTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("apk_dialog_update_card").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("apk_dialog_update_now_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("auto_update_switch").performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(false, toggledState)
+        composeTestRule.onNodeWithTag("apk_dialog_update_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("apk_dialog_update_now_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("apk_link_preview_box").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("check_app_update_button").performScrollTo().performClick()
         assertTrue(checkTriggered)
+        composeTestRule.onNodeWithTag("permanent_link_switch").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("apk_github_repo_input").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsScreenOpensAutoUpdateDialogAndPersistsToggle() {
+        val viewModel = MainViewModel(EkotaRepository(context), "admin_nitai")
+        assertTrue(viewModel.appSettings.value.autoUpdateEnabled)
+
+        composeTestRule.setContent {
+            EkotaSamitiTheme {
+                SettingsScreen(
+                    viewModel = viewModel,
+                    onNavigateBack = {},
+                    onSignOut = {}
+                )
+            }
+        }
+
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_lazy_column")
+            .performScrollToNode(hasTestTag("settings_item_apk"))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("settings_item_apk")
+            .assertIsDisplayed()
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("auto_update_switch").performScrollTo().assertIsDisplayed().performClick()
+        composeTestRule.waitForIdle()
+
+        assertFalse(viewModel.appSettings.value.autoUpdateEnabled)
+        assertFalse(LocalDataStore(context).loadAppSettings().autoUpdateEnabled)
     }
 }

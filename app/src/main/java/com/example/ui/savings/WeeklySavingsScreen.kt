@@ -1,5 +1,6 @@
 package com.example.ui.savings
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -14,7 +15,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -35,7 +35,7 @@ import com.example.util.BengaliUtils
 import com.example.util.SavingsAndFineCalculator
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WeeklySavingsScreen(
     viewModel: MainViewModel,
@@ -49,21 +49,15 @@ fun WeeklySavingsScreen(
     val role by viewModel.userRole.collectAsStateWithLifecycle()
     val currentUserProfile by viewModel.currentUserProfile.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
-    val isSavingBatch by viewModel.isSavingBatch.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
     val pendingSavingsIds by viewModel.pendingSavingsIds.collectAsStateWithLifecycle()
     val isAdmin = role == UserRole.ADMIN
-    val activeSubmitterName = currentUserProfile?.displayName?.ifBlank {
-        if (isAdmin) "অ্যাডমিন" else "মাঠ কর্মকর্তা"
-    } ?: if (isAdmin) "অ্যাডমিন" else "মাঠ কর্মকর্তা"
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
 
     // 0: Collection Form (default), 1: Savings Matrix Sheet
     var selectedModeTab by remember { mutableIntStateOf(0) }
-    // Inside Collection Form: false = All-Members Batch Form, true = Single-Member Deposit Form
-    var singleFormMode by remember { mutableStateOf(false) }
 
     var showAddDateDialog by remember { mutableStateOf(false) }
     var dateToEdit by remember { mutableStateOf<String?>(null) }
@@ -76,16 +70,16 @@ fun WeeklySavingsScreen(
 
     // Available collection dates sorted chronologically (defaulting to today for first entry)
     val sortedDates = remember(collectionPeriods, savingsRecords) {
-        val periodDates = collectionPeriods.map { it.dateStr }
-        val recordDates = savingsRecords.map { it.collectionDate }
+        val periodDates = collectionPeriods.map { SavingsAndFineCalculator.normalizeDateStr(it.dateStr) }
+        val recordDates = savingsRecords.map { SavingsAndFineCalculator.normalizeDateStr(it.collectionDate) }
         val combined = SavingsAndFineCalculator.sortDateStrings(periodDates + recordDates)
         if (combined.isEmpty()) listOf(BengaliUtils.getCurrentDateStr()) else combined
     }
 
-    var selectedDate by remember { mutableStateOf(sortedDates.last()) }
+    val selectedDate by viewModel.selectedSavingsDate.collectAsStateWithLifecycle()
     LaunchedEffect(sortedDates) {
         if (selectedDate !in sortedDates && sortedDates.isNotEmpty()) {
-            selectedDate = sortedDates.last()
+            viewModel.setSelectedSavingsDate(sortedDates.last())
         }
     }
 
@@ -98,24 +92,35 @@ fun WeeklySavingsScreen(
         members.filter { it.isActive }
     }
 
-    // Map: (memberId, date) -> SavingsRecord
+    // Map: (memberId, date) -> SavingsRecord (supports raw + normalized date keys)
     val savingsMap = remember(savingsRecords) {
         val map = mutableMapOf<String, SavingsRecord>()
         for (rec in savingsRecords) {
+            val normDate = com.example.util.DailyAccountCalculator.normalizeDateKey(rec.collectionDate)
             map["${rec.memberId}_${rec.collectionDate}"] = rec
             map["${rec.memberName}_${rec.collectionDate}"] = rec
+            if (normDate.isNotBlank()) {
+                map["${rec.memberId}_$normDate"] = rec
+                map["${rec.memberName}_$normDate"] = rec
+            }
         }
         map
+    }
+
+    val normalizedSelectedDate = remember(selectedDate) {
+        com.example.util.DailyAccountCalculator.normalizeDateKey(selectedDate).ifBlank { selectedDate }
     }
 
     // Editable amounts map for the Collection Form: memberId -> String input
     val amountInputs = remember { mutableStateMapOf<String, String>() }
 
     // Sync/pre-populate form inputs whenever selectedDate, members, or savingsRecords change
-    LaunchedEffect(selectedDate, activeMembers, savingsRecords) {
+    LaunchedEffect(selectedDate, normalizedSelectedDate, activeMembers, savingsRecords) {
         activeMembers.forEach { member ->
             val existing = savingsMap["${member.id}_$selectedDate"]
                 ?: savingsMap["${member.name}_$selectedDate"]
+                ?: savingsMap["${member.id}_$normalizedSelectedDate"]
+                ?: savingsMap["${member.name}_$normalizedSelectedDate"]
             val initialText = when {
                 existing != null && existing.amount > 0.0 -> existing.amount.toInt().toString()
                 existing != null && !existing.isPaid -> "0"
@@ -128,40 +133,18 @@ fun WeeklySavingsScreen(
     // Column totals calculation for matrix sheet
     val columnTotals = remember(sortedDates, savingsRecords, members) {
         sortedDates.associateWith { date ->
+            val normDate = com.example.util.DailyAccountCalculator.normalizeDateKey(date)
             members.sumOf { member ->
-                val rec = savingsMap["${member.id}_$date"] ?: savingsMap["${member.name}_$date"]
+                val rec = savingsMap["${member.id}_$date"]
+                    ?: savingsMap["${member.name}_$date"]
+                    ?: savingsMap["${member.id}_$normDate"]
+                    ?: savingsMap["${member.name}_$normDate"]
                 if (rec != null && rec.isPaid && rec.status != "REJECTED") rec.amount else 0.0
             }
         }
     }
 
     val grandTotal = remember(columnTotals) { columnTotals.values.sum() }
-
-    // Live form totals for selectedDate
-    val formLiveTotal by remember(activeMembers, amountInputs.toMap()) {
-        derivedStateOf {
-            activeMembers.sumOf { m ->
-                amountInputs[m.id]?.toDoubleOrNull() ?: 0.0
-            }
-        }
-    }
-    val formPaidCount by remember(activeMembers, amountInputs.toMap()) {
-        derivedStateOf {
-            activeMembers.count { m ->
-                (amountInputs[m.id]?.toDoubleOrNull() ?: 0.0) > 0.0
-            }
-        }
-    }
-
-    val hasAnyUnsubmittedMember = remember(activeMembers, selectedDate, savingsRecords) {
-        activeMembers.any { member ->
-            savingsRecords.none {
-                (it.memberId == member.id || it.memberName == member.name) &&
-                    it.status != "REJECTED" &&
-                    SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate)
-            }
-        }
-    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -225,147 +208,6 @@ fun WeeklySavingsScreen(
                     }
                 }
             )
-        },
-        bottomBar = {
-            if (selectedModeTab == 0 && !singleFormMode && membersUiState is UiState.Success && activeMembers.isNotEmpty()) {
-                Surface(
-                    tonalElevation = 0.dp,
-                    shadowElevation = 6.dp,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "তারিখ: $selectedDate (${BengaliUtils.toBengaliDigits(formPaidCount)}/${BengaliUtils.toBengaliDigits(activeMembers.size)} জন)",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "মোট: ${BengaliUtils.formatTaka(formLiveTotal)}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-
-                        if (hasAnyUnsubmittedMember) {
-                            Button(
-                                onClick = {
-                                    val parsedMap = activeMembers.mapNotNull { member ->
-                                        val submittedSameWeek = savingsRecords.any {
-                                            (it.memberId == member.id || it.memberName == member.name) &&
-                                                it.status != "REJECTED" &&
-                                                SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate)
-                                        }
-                                        if (submittedSameWeek) {
-                                            null
-                                        } else {
-                                            member.id to (amountInputs[member.id]?.toDoubleOrNull() ?: 0.0)
-                                        }
-                                    }.toMap()
-                                    var lastCatchUpCount = 0
-                                    var lastFinesCount = 0
-                                    viewModel.submitWeeklySavingsBatch(
-                                        collectionDate = selectedDate,
-                                        memberAmounts = parsedMap,
-                                        onDetails = { catchUpCount, finesGenerated ->
-                                            lastCatchUpCount = catchUpCount
-                                            lastFinesCount = finesGenerated
-                                        },
-                                        onSuccess = { paidCount, totalAmount ->
-                                            val suffix = if (role == UserRole.FIELD_OFFICER) " (অনুমোদনের জন্য পাঠানো হয়েছে)" else ""
-                                            val extras = buildString {
-                                                if (lastCatchUpCount > 0) {
-                                                    append("পূর্বের বকেয়া ${BengaliUtils.toBengaliDigits(lastCatchUpCount)} সপ্তাহ কাউন্ট হয়েছে")
-                                                }
-                                                if (lastFinesCount > 0) {
-                                                    if (isNotEmpty()) append("\n")
-                                                    append("${BengaliUtils.toBengaliDigits(lastFinesCount)}টি ৳১০ জরিমানা যুক্ত হয়েছে")
-                                                }
-                                                if (syncStatus.isCloudAuthenticated && !syncStatus.isOnline) {
-                                                    if (isNotEmpty()) append("\n")
-                                                    append("অফলাইনে সংরক্ষিত, নেটওয়ার্ক ফিরলে অটো সিঙ্ক হবে")
-                                                }
-                                            }.ifBlank { null }
-                                            successPopupData = Pair(
-                                                "তারিখ: $selectedDate\n${BengaliUtils.toBengaliDigits(paidCount)} জনের মোট ${BengaliUtils.formatTaka(totalAmount)} সঞ্চয় সফলভাবে জমা হয়েছে$suffix",
-                                                extras
-                                            )
-                                        },
-                                        onError = { err ->
-                                            coroutineScope.launch {
-                                                snackbarHostState.showSnackbar(err)
-                                            }
-                                        }
-                                    )
-                                },
-                                enabled = !isSavingBatch,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = EmeraldGreenPrimary,
-                                    contentColor = Color.White
-                                ),
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .testTag("submit_weekly_savings_button")
-                            ) {
-                                if (isSavingBatch) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        color = Color.White,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("সংরক্ষণ হচ্ছে...")
-                                } else {
-                                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "সঞ্চয় সংরক্ষণ",
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
-                            }
-                        } else {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = ekotaBadgeSuccessBg(),
-                                modifier = Modifier.testTag("weekly_savings_completed_badge")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Verified,
-                                        contentDescription = null,
-                                        tint = ekotaSuccessTextColor(),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "এই সপ্তাহের জমা সম্পন্ন ✓",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = ekotaSuccessTextColor(),
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     ) { paddingValues ->
         Column(
@@ -386,16 +228,21 @@ fun WeeklySavingsScreen(
                     selectedContentColor = HeaderSlateNavy,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag("tab_collection_form"),
-                    icon = { Icon(Icons.Default.EditNote, contentDescription = null) },
                     text = {
-                        Text(
-                            text = "সাপ্তাহিক সংগ্রহ ফর্ম",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (selectedModeTab == 0) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "সাপ্তাহিক সংগ্রহ ফর্ম",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (selectedModeTab == 0) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 )
                 Tab(
@@ -404,16 +251,21 @@ fun WeeklySavingsScreen(
                     selectedContentColor = HeaderSlateNavy,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag("tab_savings_sheet"),
-                    icon = { Icon(Icons.Default.TableChart, contentDescription = null) },
                     text = {
-                        Text(
-                            text = "সঞ্চয় শিট (${BengaliUtils.toBengaliDigits(sortedDates.size)} সপ্তাহ)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (selectedModeTab == 1) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.TableChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "সঞ্চয় শিট (${BengaliUtils.toBengaliDigits(sortedDates.size)} সপ্তাহ)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (selectedModeTab == 1) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 )
             }
@@ -423,483 +275,421 @@ fun WeeklySavingsScreen(
                 // TAB 0: WEEKLY SAVINGS COLLECTION FORM (Firestore Members)
                 // -------------------------------------------------------------
                 Column(modifier = Modifier.fillMaxSize()) {
-
-                    // Toggle: All-Members Batch Form vs Single-Member Deposit Form
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = !singleFormMode,
-                            onClick = { singleFormMode = false },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Groups,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = "সকল সদস্য ফর্ম",
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                labelColor = MaterialTheme.colorScheme.onSurface,
-                                iconColor = MaterialTheme.colorScheme.primary,
-                                selectedContainerColor = HeaderSlateNavy,
-                                selectedLabelColor = Color.White,
-                                selectedLeadingIconColor = Color.White
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("toggle_batch_form_mode")
-                        )
-                        FilterChip(
-                            selected = singleFormMode,
-                            onClick = { singleFormMode = true },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.PersonAddAlt1,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = "একক জমা ফর্ম",
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                labelColor = MaterialTheme.colorScheme.onSurface,
-                                iconColor = CardTealGradient.first(),
-                                selectedContainerColor = CardTealGradient.first(),
-                                selectedLabelColor = Color.White,
-                                selectedLeadingIconColor = Color.White
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("toggle_single_form_mode")
-                        )
-                    }
-
-                    if (singleFormMode) {
-                        SingleMemberSavingsDepositForm(
-                            members = activeMembers,
-                            selectedDate = selectedDate,
-                            savingsRecords = savingsRecords,
-                            isCloudAuthenticated = syncStatus.isCloudAuthenticated,
-                            isOnline = syncStatus.isOnline,
-                            isAdmin = isAdmin,
-                            collectorName = activeSubmitterName,
-                            onDateChange = { updatedDate -> selectedDate = updatedDate },
-                            onSubmitDeposit = { member, colDate, amount ->
-                                viewModel.recordSavings(
-                                    member = member,
-                                    collectionDate = colDate,
-                                    amount = amount,
-                                    onSuccess = {
-                                        val suffix = if (role == UserRole.FIELD_OFFICER) " (অনুমোদনের জন্য পাঠানো হয়েছে)" else ""
-                                        val offlineSub = if (syncStatus.isCloudAuthenticated && !syncStatus.isOnline) {
-                                            "অফলাইনে সংরক্ষিত, নেটওয়ার্ক ফিরলে অটো সিঙ্ক হবে"
-                                        } else null
-                                        successPopupData = Pair(
-                                            "${member.name}-এর $colDate তারিখের ${BengaliUtils.formatTaka(amount)} সঞ্চয় সফলভাবে জমা হয়েছে$suffix",
-                                            offlineSub
-                                        )
-                                    },
-                                    onError = { err ->
-                                        coroutineScope.launch { snackbarHostState.showSnackbar(err) }
-                                    }
-                                )
-                            }
-                        )
-                    } else {
-                        // Date Selector & Quick Actions Header
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "কালেকশন তারিখ:",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AssistChip(
-                                        onClick = onNavigateToFines,
-                                        label = {
-                                            Text(
-                                                text = "জরিমানা শিট (৳১০)",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = ekotaWarningTextColor()
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Default.ReceiptLong,
-                                                contentDescription = null,
-                                                tint = ekotaWarningTextColor(),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("savings_to_fines_chip")
-                                    )
-                                    val syncChipText = when {
-                                        !syncStatus.isCloudAuthenticated -> "লোকাল"
-                                        !syncStatus.isOnline && syncStatus.pendingCount > 0 ->
-                                            "অফলাইন (${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)})"
-                                        !syncStatus.isOnline -> "অফলাইন ক্যাশ"
-                                        syncStatus.isSyncing || syncStatus.pendingCount > 0 ->
-                                            "সিঙ্ক বাকি (${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)})"
-                                        else -> "সিঙ্কড"
-                                    }
-                                    val syncChipIcon = when {
-                                        !syncStatus.isCloudAuthenticated -> Icons.Default.Storage
-                                        !syncStatus.isOnline -> Icons.Default.CloudOff
-                                        syncStatus.isSyncing || syncStatus.pendingCount > 0 -> Icons.Default.CloudUpload
-                                        else -> Icons.Default.CloudDone
-                                    }
-                                    val syncChipTint = when {
-                                        !syncStatus.isCloudAuthenticated -> MaterialTheme.colorScheme.primary
-                                        !syncStatus.isOnline -> ekotaWarningTextColor()
-                                        syncStatus.isSyncing || syncStatus.pendingCount > 0 -> MaterialTheme.colorScheme.tertiary
-                                        else -> MaterialTheme.colorScheme.primary
-                                    }
-                                    AssistChip(
-                                        onClick = {
-                                            if (syncStatus.isCloudAuthenticated) {
-                                                viewModel.triggerManualSync { _, msg ->
-                                                    coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
-                                                }
-                                            } else {
-                                                viewModel.refreshMembersFromFirestore()
-                                            }
-                                        },
-                                        label = {
-                                            Text(
-                                                text = syncChipText,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = syncChipIcon,
-                                                contentDescription = null,
-                                                tint = syncChipTint,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("savings_sync_status_chip")
-                                    )
-                                }
-                            }
-
-                            // Horizontal scrollable date chips
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                sortedDates.forEach { date ->
-                                    FilterChip(
-                                        selected = selectedDate == date,
-                                        onClick = { selectedDate = date },
-                                        label = {
-                                            Text(
-                                                text = date,
-                                                fontWeight = if (selectedDate == date) FontWeight.Bold else FontWeight.Medium
-                                            )
-                                        },
-                                        leadingIcon = if (selectedDate == date) {
-                                            { Icon(Icons.Default.EventAvailable, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                        } else null,
-                                        colors = FilterChipDefaults.filterChipColors(
-                                            containerColor = MaterialTheme.colorScheme.surface,
-                                            selectedContainerColor = HeaderSlateNavy,
-                                            selectedLabelColor = Color.White,
-                                            selectedLeadingIconColor = Color.White,
-                                            labelColor = MaterialTheme.colorScheme.onSurface
-                                        ),
-                                        modifier = Modifier.testTag("date_chip_$date")
-                                    )
-                                }
-                                if (isAdmin) {
-                                    AssistChip(
-                                        onClick = { dateToEdit = selectedDate },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Default.Edit,
-                                                contentDescription = null,
-                                                modifier = Modifier.size(16.dp),
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
-                                        },
-                                        label = {
-                                            Text(
-                                                text = "তারিখ আপডেট",
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("chip_edit_selected_date")
-                                    )
-                                    AssistChip(
-                                        onClick = { showAddDateDialog = true },
-                                        label = {
-                                            Text(
-                                                text = "+ নতুন তারিখ",
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        },
-                                        modifier = Modifier.testTag("chip_add_new_date")
-                                    )
-                                }
-                            }
-
-                            // Bulk Fill Row
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        activeMembers.forEach { m ->
-                                            val existing = savingsMap["${m.id}_$selectedDate"] ?: savingsMap["${m.name}_$selectedDate"]
-                                            if (isAdmin || existing == null || existing.status == "REJECTED") {
-                                                amountInputs[m.id] = m.weeklySavingsAmount.toInt().toString()
-                                            }
-                                        }
-                                    },
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.onSurface
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 48.dp)
-                                        .testTag("fill_defaults_button"),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(Icons.Default.DoneAll, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "নির্ধারিত বসান",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        activeMembers.forEach { m ->
-                                            val existing = savingsMap["${m.id}_$selectedDate"] ?: savingsMap["${m.name}_$selectedDate"]
-                                            if (isAdmin || existing == null || existing.status == "REJECTED") {
-                                                amountInputs[m.id] = "0"
-                                            }
-                                        }
-                                    },
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = MaterialTheme.colorScheme.onSurface
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .heightIn(min = 48.dp)
-                                        .testTag("clear_all_button"),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
-                                ) {
-                                    Icon(Icons.Default.ClearAll, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "সব শূন্য (০)",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Member List Form Content driven by UiState
-                    when (val state = membersUiState) {
-                        is UiState.Loading -> {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
+                    val dateControlsContent: @Composable () -> Unit = {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    CircularProgressIndicator(color = EmeraldGreenPrimary)
-                                    Text(
-                                        text = "Firestore থেকে সদস্য তালিকা আনা হচ্ছে...",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-
-                        is UiState.Error -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Card(
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(20.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.ErrorOutline,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(40.dp)
-                                        )
                                         Text(
-                                            text = state.message,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onErrorContainer,
-                                            textAlign = TextAlign.Center
+                                            text = "কালেকশন তারিখ:",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Button(
-                                            onClick = { viewModel.refreshMembersFromFirestore() },
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = EmeraldGreenPrimary,
-                                                contentColor = Color.White
-                                            )
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("পুনরায় চেষ্টা করুন")
+                                            AssistChip(
+                                                onClick = onNavigateToFines,
+                                                label = {
+                                                    Text(
+                                                        text = "জরিমানা শিট (৳১০)",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = ekotaWarningTextColor()
+                                                    )
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Default.ReceiptLong,
+                                                        contentDescription = null,
+                                                        tint = ekotaWarningTextColor(),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("savings_to_fines_chip")
+                                            )
+                                            val syncChipText = when {
+                                                !syncStatus.isCloudAuthenticated -> "লোকাল"
+                                                !syncStatus.isOnline && syncStatus.pendingCount > 0 ->
+                                                    "অফলাইন (${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)})"
+                                                !syncStatus.isOnline -> "অফলাইন ক্যাশ"
+                                                syncStatus.isSyncing || syncStatus.pendingCount > 0 ->
+                                                    "সিঙ্ক বাকি (${BengaliUtils.toBengaliDigits(syncStatus.pendingCount)})"
+                                                else -> "সিঙ্কড"
+                                            }
+                                            val syncChipIcon = when {
+                                                !syncStatus.isCloudAuthenticated -> Icons.Default.Storage
+                                                !syncStatus.isOnline -> Icons.Default.CloudOff
+                                                syncStatus.isSyncing || syncStatus.pendingCount > 0 -> Icons.Default.CloudUpload
+                                                else -> Icons.Default.CloudDone
+                                            }
+                                            val syncChipTint = when {
+                                                !syncStatus.isCloudAuthenticated -> MaterialTheme.colorScheme.primary
+                                                !syncStatus.isOnline -> ekotaWarningTextColor()
+                                                syncStatus.isSyncing || syncStatus.pendingCount > 0 -> MaterialTheme.colorScheme.tertiary
+                                                else -> MaterialTheme.colorScheme.primary
+                                            }
+                                            AssistChip(
+                                                onClick = {
+                                                    if (syncStatus.isCloudAuthenticated) {
+                                                        viewModel.triggerManualSync { _, msg ->
+                                                            coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                                                        }
+                                                    } else {
+                                                        viewModel.refreshMembersFromFirestore()
+                                                    }
+                                                },
+                                                label = {
+                                                    Text(
+                                                        text = syncChipText,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = syncChipIcon,
+                                                        contentDescription = null,
+                                                        tint = syncChipTint,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("savings_sync_status_chip")
+                                            )
+                                        }
+                                    }
+
+                                    // Horizontal scrollable date chips
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        sortedDates.forEach { date ->
+                                            FilterChip(
+                                                selected = selectedDate == date,
+                                                onClick = { viewModel.setSelectedSavingsDate(date) },
+                                                label = {
+                                                    Text(
+                                                        text = date,
+                                                        fontWeight = if (selectedDate == date) FontWeight.Bold else FontWeight.Medium
+                                                    )
+                                                },
+                                                leadingIcon = if (selectedDate == date) {
+                                                    { Icon(Icons.Default.EventAvailable, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                                } else null,
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    containerColor = MaterialTheme.colorScheme.surface,
+                                                    selectedContainerColor = HeaderSlateNavy,
+                                                    selectedLabelColor = Color.White,
+                                                    selectedLeadingIconColor = Color.White,
+                                                    labelColor = MaterialTheme.colorScheme.onSurface
+                                                ),
+                                                modifier = Modifier.testTag("date_chip_$date")
+                                            )
+                                        }
+                                        if (isAdmin) {
+                                            AssistChip(
+                                                onClick = { dateToEdit = selectedDate },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = MaterialTheme.colorScheme.primary
+                                                    )
+                                                },
+                                                label = {
+                                                    Text(
+                                                        text = "তারিখ আপডেট",
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("chip_edit_selected_date")
+                                            )
+                                            AssistChip(
+                                                onClick = { showAddDateDialog = true },
+                                                label = {
+                                                    Text(
+                                                        text = "+ নতুন তারিখ",
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("chip_add_new_date")
+                                            )
                                         }
                                     }
                                 }
                             }
                         }
 
-                        is UiState.Success -> {
-                            if (activeMembers.isEmpty()) {
+                        // Member List Form Content driven by UiState
+                        when (val state = membersUiState) {
+                            is UiState.Loading -> {
+                                dateControlsContent()
                                 Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(24.dp),
+                                    modifier = Modifier.fillMaxSize(),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.GroupOff,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(48.dp)
-                                        )
+                                        CircularProgressIndicator(color = EmeraldGreenPrimary)
                                         Text(
-                                            text = "কোনো সক্রিয় সদস্য পাওয়া যায়নি",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Button(
-                                            onClick = { showAddMemberDialog = true },
-                                            modifier = Modifier.heightIn(min = 48.dp),
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = EmeraldGreenPrimary,
-                                                contentColor = Color.White
-                                            )
-                                        ) {
-                                            Icon(Icons.Default.PersonAdd, contentDescription = null)
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("নতুন সদস্য যোগ করুন", fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            } else {
-                                LazyColumn(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .testTag("weekly_savings_form_list"),
-                                    contentPadding = PaddingValues(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    itemsIndexed(activeMembers, key = { _, m -> m.id }) { index, member ->
-                                        val existing = savingsMap["${member.id}_$selectedDate"]
-                                            ?: savingsMap["${member.name}_$selectedDate"]
-                                        val submittedThisWeek = remember(member.id, selectedDate, savingsRecords) {
-                                            savingsRecords.any {
-                                                (it.memberId == member.id || it.memberName == member.name) &&
-                                                    it.status != "REJECTED" &&
-                                                    SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate)
-                                            }
-                                        }
-                                        val missedEarlier = remember(member.id, selectedDate, sortedDates, savingsRecords) {
-                                            SavingsAndFineCalculator.findMissedEarlierSavingsDates(
-                                                member = member,
-                                                targetDate = selectedDate,
-                                                orderedDates = sortedDates,
-                                                existingRecords = savingsRecords
-                                            )
-                                        }
-                                        MemberSavingsInputCard(
-                                            member = member,
-                                            amountText = amountInputs[member.id] ?: member.weeklySavingsAmount.toInt().toString(),
-                                            existingRecord = existing,
-                                            missedDatesCount = missedEarlier.size,
-                                            isAdmin = isAdmin,
-                                            isSubmittedThisWeek = submittedThisWeek,
-                                            isPendingSync = existing != null && (existing.id in pendingSavingsIds),
-                                            cardAccentIndex = index,
-                                            onAmountChange = { newText ->
-                                                amountInputs[member.id] = newText
-                                            }
+                                            text = "Firestore থেকে সদস্য তালিকা আনা হচ্ছে...",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
                             }
+
+                            is UiState.Error -> {
+                                dateControlsContent()
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Card(
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(20.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ErrorOutline,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(40.dp)
+                                            )
+                                            Text(
+                                                text = state.message,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                                textAlign = TextAlign.Center
+                                            )
+                                            Button(
+                                                onClick = { viewModel.refreshMembersFromFirestore() },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = EmeraldGreenPrimary,
+                                                    contentColor = Color.White
+                                                )
+                                            ) {
+                                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("পুনরায় চেষ্টা করুন")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            is UiState.Success -> {
+                                if (activeMembers.isEmpty()) {
+                                    dateControlsContent()
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(24.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.GroupOff,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(48.dp)
+                                            )
+                                            Text(
+                                                text = "কোনো সক্রিয় সদস্য পাওয়া যায়নি",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Button(
+                                                onClick = { showAddMemberDialog = true },
+                                                modifier = Modifier.heightIn(min = 48.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = EmeraldGreenPrimary,
+                                                    contentColor = Color.White
+                                                )
+                                            ) {
+                                                Icon(Icons.Default.PersonAdd, contentDescription = null)
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("নতুন সদস্য যোগ করুন", fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .testTag("weekly_savings_form_list")
+                                    ) {
+                                        item(key = "date_controls_header") {
+                                            dateControlsContent()
+                                        }
+                                        stickyHeader(key = "savings_list_header") {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp)
+                                                    .padding(top = 6.dp)
+                                                    .background(HeaderSlateNavy, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                                                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                                                    .testTag("savings_list_header"),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "SL",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    textAlign = TextAlign.Center,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.width(40.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "নাম",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    textAlign = TextAlign.Start,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "টাকা",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    textAlign = TextAlign.End,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.width(72.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "জমা",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    textAlign = TextAlign.Center,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.width(86.dp)
+                                                )
+                                            }
+                                        }
+                                        itemsIndexed(activeMembers, key = { _, m -> m.id }) { index, member ->
+                                            val existing = savingsMap["${member.id}_$selectedDate"]
+                                                ?: savingsMap["${member.name}_$selectedDate"]
+                                                ?: savingsMap["${member.id}_$normalizedSelectedDate"]
+                                                ?: savingsMap["${member.name}_$normalizedSelectedDate"]
+                                            val submittedThisWeek = remember(member.id, selectedDate, normalizedSelectedDate, savingsRecords) {
+                                                savingsRecords.any {
+                                                    (it.memberId == member.id || it.memberName == member.name) &&
+                                                        it.status != "REJECTED" &&
+                                                        (com.example.util.DailyAccountCalculator.normalizeDateKey(it.collectionDate) == normalizedSelectedDate ||
+                                                            SavingsAndFineCalculator.isSameWeek(it.collectionDate, selectedDate))
+                                                }
+                                            }
+                                            val missedEarlier = remember(member.id, selectedDate, sortedDates, savingsRecords) {
+                                                SavingsAndFineCalculator.findMissedEarlierSavingsDates(
+                                                    member = member,
+                                                    targetDate = selectedDate,
+                                                    orderedDates = sortedDates,
+                                                    existingRecords = savingsRecords
+                                                )
+                                            }
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp)
+                                            ) {
+                                                MemberSavingsInputCard(
+                                                    member = member,
+                                                    amountText = amountInputs[member.id] ?: BengaliUtils.formatCleanAmount(member.weeklySavingsAmount),
+                                                    existingRecord = existing,
+                                                    missedDatesCount = missedEarlier.size,
+                                                    isAdmin = isAdmin,
+                                                    isSubmittedThisWeek = submittedThisWeek,
+                                                    isPendingSync = existing != null && (existing.id in pendingSavingsIds),
+                                                    cardAccentIndex = index,
+                                                    onAmountChange = { newText ->
+                                                        amountInputs[member.id] = newText
+                                                    },
+                                                    onSubmitMember = {
+                                                        val rawAmt = amountInputs[member.id] ?: BengaliUtils.formatCleanAmount(member.weeklySavingsAmount)
+                                                        val parsedAmt = rawAmt.toDoubleOrNull()
+                                                        if (parsedAmt == null || parsedAmt < 0.0) {
+                                                            coroutineScope.launch {
+                                                                snackbarHostState.showSnackbar("অনুগ্রহ করে সঠিক টাকার পরিমাণ লিখুন")
+                                                            }
+                                                        } else {
+                                                            viewModel.recordSavings(
+                                                                member = member,
+                                                                collectionDate = selectedDate,
+                                                                amount = parsedAmt,
+                                                                onSuccess = {
+                                                                    coroutineScope.launch {
+                                                                        snackbarHostState.showSnackbar(
+                                                                            "${member.name}-এর $selectedDate তারিখের ${BengaliUtils.formatTaka(parsedAmt)} সঞ্চয় সাবমিট হয়েছে"
+                                                                        )
+                                                                    }
+                                                                },
+                                                                onError = { err ->
+                                                                    coroutineScope.launch {
+                                                                        snackbarHostState.showSnackbar(err)
+                                                                    }
+                                                                }
+                                                            )
+                                                        }
+                                                    }
+                                                )
+                                                if (index < activeMembers.lastIndex) {
+                                                    HorizontalDivider(
+                                                        thickness = 0.75.dp,
+                                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+                                                    )
+                                                } else {
+                                                    Spacer(modifier = Modifier.height(10.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }
-                    }
                 }
             } else {
                 // -------------------------------------------------------------
@@ -950,14 +740,16 @@ fun WeeklySavingsScreen(
                         columnTotals = columnTotals,
                         grandTotal = grandTotal,
                         onCellClick = { member, date ->
+                            val normCellDate = com.example.util.DailyAccountCalculator.normalizeDateKey(date)
                             val alreadySubmittedWeek = savingsRecords.any {
                                 (it.memberId == member.id || it.memberName == member.name) &&
                                     it.status != "REJECTED" &&
-                                    SavingsAndFineCalculator.isSameWeek(it.collectionDate, date)
+                                    (com.example.util.DailyAccountCalculator.normalizeDateKey(it.collectionDate) == normCellDate ||
+                                        SavingsAndFineCalculator.isSameWeek(it.collectionDate, date))
                             }
                             if (alreadySubmittedWeek) {
                                 coroutineScope.launch {
-                                    snackbarHostState.showSnackbar("এই সপ্তাহে ($date) ইতিমধ্যেই সঞ্চয় সাবমিট করা হয়েছে। এক সপ্তাহে দুইবার সাবমিট করা যাবে না।")
+                                    snackbarHostState.showSnackbar("এই তারিখে ($date) ইতিমধ্যেই সঞ্চয় সাবমিট করা হয়েছে। এক তারিখে দুইবার সাবমিট করা যাবে না।")
                                 }
                             } else {
                                 entryDialogTarget = Pair(member, date)
@@ -1019,7 +811,7 @@ fun WeeklySavingsScreen(
                     dateStr = newDate,
                     monthYear = settings.currentMonthHeading,
                     onSuccess = {
-                        selectedDate = newDate
+                        viewModel.setSelectedSavingsDate(newDate)
                         showAddDateDialog = false
                     },
                     onError = { err ->
@@ -1042,7 +834,7 @@ fun WeeklySavingsScreen(
                     monthYear = settings.currentMonthHeading,
                     onSuccess = {
                         if (selectedDate == oldDate) {
-                            selectedDate = newDate
+                            viewModel.setSelectedSavingsDate(newDate)
                         }
                         dateToEdit = null
                         coroutineScope.launch {
@@ -1074,9 +866,11 @@ fun WeeklySavingsScreen(
 
     // Add Member Dialog from Weekly Savings Screen
     if (showAddMemberDialog) {
+        val suggestedSerial = remember(members) { viewModel.suggestNextMemberSerial(members) }
         MemberFormDialog(
             title = "নতুন সদস্য যোগ করুন",
             initialMember = null,
+            suggestedSerial = suggestedSerial,
             onDismiss = { showAddMemberDialog = false },
             onSave = { newMember ->
                 viewModel.addMember(newMember, onSuccess = { showAddMemberDialog = false }, onError = {})

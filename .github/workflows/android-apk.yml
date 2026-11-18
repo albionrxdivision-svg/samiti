@@ -142,9 +142,13 @@ jobs:
             TAG="v1.0.${{ github.run_number }}"
             if gh release view "$TAG" >/dev/null 2>&1; then
               gh release upload "$TAG" Ekota-Samiti.apk --clobber
+              gh release edit "$TAG" --latest
             else
               gh release create "$TAG" Ekota-Samiti.apk \
+                --latest \
                 --title "Ekota Samiti $TAG" \
                 --notes "Version Code $((GITHUB_RUN_NUMBER + 10)) — Direct in-place update without uninstalling."
             fi
+            PERMANENT_URL="https://github.com/${{ github.repository }}/releases/latest/download/Ekota-Samiti.apk"
+            echo "Permanent APK Update Link: $PERMANENT_URL" >> "$GITHUB_STEP_SUMMARY"
           fi

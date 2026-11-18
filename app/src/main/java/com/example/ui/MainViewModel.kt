@@ -153,6 +153,47 @@ class MainViewModel(
     private val _collectionPeriods = MutableStateFlow<List<CollectionPeriod>>(emptyList())
     val collectionPeriods: StateFlow<List<CollectionPeriod>> = _collectionPeriods.asStateFlow()
 
+    private val deletedDocIds = mutableSetOf<String>()
+
+    private val _selectedSavingsDate = MutableStateFlow(
+        repository.loadSelectedSavingsDate().ifBlank { com.example.util.BengaliUtils.getCurrentDateStr() }
+    )
+    val selectedSavingsDate: StateFlow<String> = _selectedSavingsDate.asStateFlow()
+
+    fun setSelectedSavingsDate(date: String) {
+        val normalized = com.example.util.DailyAccountCalculator.normalizeDateKey(date)
+        if (normalized.isNotBlank()) {
+            _selectedSavingsDate.value = normalized
+            repository.saveSelectedSavingsDate(normalized)
+        }
+    }
+
+    private val _selectedLoanDate = MutableStateFlow(
+        repository.loadSelectedLoanDate().ifBlank { com.example.util.BengaliUtils.getCurrentDateStr() }
+    )
+    val selectedLoanDate: StateFlow<String> = _selectedLoanDate.asStateFlow()
+
+    fun setSelectedLoanDate(date: String) {
+        val normalized = com.example.util.DailyAccountCalculator.normalizeDateKey(date)
+        if (normalized.isNotBlank()) {
+            _selectedLoanDate.value = normalized
+            repository.saveSelectedLoanDate(normalized)
+        }
+    }
+
+    private val _selectedFineDate = MutableStateFlow(
+        repository.loadSelectedFineDate().ifBlank { com.example.util.BengaliUtils.getCurrentDateStr() }
+    )
+    val selectedFineDate: StateFlow<String> = _selectedFineDate.asStateFlow()
+
+    fun setSelectedFineDate(date: String) {
+        val normalized = com.example.util.DailyAccountCalculator.normalizeDateKey(date)
+        if (normalized.isNotBlank()) {
+            _selectedFineDate.value = normalized
+            repository.saveSelectedFineDate(normalized)
+        }
+    }
+
     private val _loans = MutableStateFlow<List<Loan>>(emptyList())
     val loans: StateFlow<List<Loan>> = _loans.asStateFlow()
 
@@ -182,6 +223,9 @@ class MainViewModel(
 
     private val _updateBannerDismissed = MutableStateFlow(false)
     val updateBannerDismissed: StateFlow<Boolean> = _updateBannerDismissed.asStateFlow()
+
+    private val _lastUpdateStatusMessage = MutableStateFlow<String?>(null)
+    val lastUpdateStatusMessage: StateFlow<String?> = _lastUpdateStatusMessage.asStateFlow()
 
     val dashboardSummary: StateFlow<DashboardSummary> = combine(
         combine(_members, _savingsRecords, _loans, _loanInstallments, _fundLedger) {
@@ -273,21 +317,49 @@ class MainViewModel(
             _fundLedger.value = repository.loadLocalFundLedger()
             _appSettings.value = repository.loadLocalAppSettings()
             _pendingAdminNotifications.value = repository.loadLocalAdminNotifications().filter { !it.isRead }
-            checkForAppUpdates(force = false)
+            if (_appSettings.value.autoUpdateEnabled) {
+                checkForAppUpdates(force = false)
+            }
             return
         }
 
         viewModelScope.launch {
-            // Immediately warm UI from Room offline cache so Field Officers work seamlessly with 0 signal
+            // Immediately warm UI from LocalDataStore + Room offline cache so ALL user entries and dates appear instantly
             try {
-                val cachedMembers = repository.loadCachedMembersFromRoom()
+                val localMembers = repository.loadLocalMembers()
+                val cachedMembers = if (localMembers.isNotEmpty()) localMembers else repository.loadCachedMembersFromRoom()
                 if (cachedMembers.isNotEmpty() && _members.value.isEmpty()) {
                     _members.value = cachedMembers
                     _membersUiState.value = UiState.Success(cachedMembers)
                 }
-                val cachedLoans = repository.loadCachedLoansFromRoom()
+                val localSavings = repository.loadLocalSavings()
+                if (localSavings.isNotEmpty() && _savingsRecords.value.isEmpty()) {
+                    _savingsRecords.value = localSavings
+                }
+                val localPeriods = repository.loadLocalCollectionPeriods()
+                if (localPeriods.isNotEmpty() && _collectionPeriods.value.isEmpty()) {
+                    _collectionPeriods.value = localPeriods
+                }
+                val localLoans = repository.loadLocalLoans()
+                val cachedLoans = if (localLoans.isNotEmpty()) localLoans else repository.loadCachedLoansFromRoom()
                 if (cachedLoans.isNotEmpty() && _loans.value.isEmpty()) {
                     _loans.value = cachedLoans
+                }
+                val localInstallments = repository.loadLocalLoanInstallments()
+                if (localInstallments.isNotEmpty() && _loanInstallments.value.isEmpty()) {
+                    _loanInstallments.value = localInstallments
+                }
+                val localFines = repository.loadLocalFines()
+                if (localFines.isNotEmpty() && _fines.value.isEmpty()) {
+                    _fines.value = localFines
+                }
+                val localLedger = repository.loadLocalFundLedger()
+                if (localLedger.isNotEmpty() && _fundLedger.value.isEmpty()) {
+                    _fundLedger.value = localLedger
+                }
+                val localSettings = repository.loadLocalAppSettings()
+                if (localSettings != AppSettings()) {
+                    _appSettings.value = localSettings
                 }
             } catch (_: Exception) {
             }
@@ -346,13 +418,21 @@ class MainViewModel(
                         }
                     }
                     .collect { update ->
-                        _members.value = update.items
-                        _membersUiState.value = UiState.Success(update.items)
+                        val localMembers = repository.loadLocalMembers()
+                        val merged = (update.items + localMembers)
+                            .filter { it.id !in deletedDocIds }
+                            .distinctBy { it.id.ifBlank { "${it.memberSerial}_${it.name}" } }
+                            .sortedBy {
+                                it.memberSerial.filter { ch -> ch.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
+                            }
+                        _members.value = merged
+                        _membersUiState.value = UiState.Success(merged)
                         _pendingMemberIds.value = update.pendingDocumentIds
                         _isFromCache.value = update.isFromCache
+                        repository.saveLocalMembers(merged)
                         launch {
                             try {
-                                repository.cacheMembersInRoom(update.items)
+                                repository.cacheMembersInRoom(merged)
                             } catch (_: Exception) {
                             }
                         }
@@ -363,7 +443,17 @@ class MainViewModel(
                 repository.observeSavingsWithMetadata()
                     .catch { /* Keep current cached records if stream fails */ }
                     .collect { update ->
-                        _savingsRecords.value = mergeCloudAndRoomSavings(update.items, _roomPendingTransactions.value)
+                        val localSavings = repository.loadLocalSavings()
+                        val cloudAndRoom = mergeCloudAndRoomSavings(update.items, _roomPendingTransactions.value)
+                        val merged = (cloudAndRoom + localSavings)
+                            .filter { it.id !in deletedDocIds }
+                            .distinctBy {
+                                it.id.ifBlank {
+                                    "${it.memberId}_${com.example.util.DailyAccountCalculator.normalizeDateKey(it.collectionDate)}"
+                                }
+                            }
+                        _savingsRecords.value = merged
+                        repository.saveLocalSavings(merged)
                         _firestorePendingSavingsIds.value = update.pendingDocumentIds
                         _isFromCache.value = update.isFromCache
                         if (!update.hasPendingWrites && !update.isFromCache) {
@@ -375,18 +465,30 @@ class MainViewModel(
             launch {
                 repository.observeCollectionPeriods()
                     .catch { }
-                    .collect { _collectionPeriods.value = it }
+                    .collect { cloudPeriods ->
+                        val localPeriods = repository.loadLocalCollectionPeriods()
+                        val merged = (cloudPeriods + localPeriods)
+                            .filter { it.dateStr.isNotBlank() }
+                            .distinctBy { com.example.util.DailyAccountCalculator.normalizeDateKey(it.dateStr) }
+                        _collectionPeriods.value = merged
+                        repository.saveLocalCollectionPeriods(merged)
+                    }
             }
 
             launch {
                 repository.observeLoansWithMetadata()
                     .catch { }
                     .collect { update ->
-                        _loans.value = update.items
+                        val localLoans = repository.loadLocalLoans()
+                        val merged = (update.items + localLoans)
+                            .filter { it.id !in deletedDocIds }
+                            .distinctBy { it.id }
+                        _loans.value = merged
+                        repository.saveLocalLoans(merged)
                         _pendingLoanIds.value = update.pendingDocumentIds
                         launch {
                             try {
-                                repository.cacheLoansInRoom(update.items)
+                                repository.cacheLoansInRoom(merged)
                             } catch (_: Exception) {
                             }
                         }
@@ -397,7 +499,17 @@ class MainViewModel(
                 repository.observeLoanInstallmentsWithMetadata()
                     .catch { }
                     .collect { update ->
-                        _loanInstallments.value = mergeCloudAndRoomInstallments(update.items, _roomPendingTransactions.value)
+                        val localInsts = repository.loadLocalLoanInstallments()
+                        val cloudAndRoom = mergeCloudAndRoomInstallments(update.items, _roomPendingTransactions.value)
+                        val merged = (cloudAndRoom + localInsts)
+                            .filter { it.id !in deletedDocIds }
+                            .distinctBy {
+                                it.id.ifBlank {
+                                    "${it.loanId}_${com.example.util.DailyAccountCalculator.normalizeDateKey(it.installmentDate)}"
+                                }
+                            }
+                        _loanInstallments.value = merged
+                        repository.saveLocalLoanInstallments(merged)
                         _firestorePendingInstallmentIds.value = update.pendingDocumentIds
                     }
             }
@@ -406,7 +518,12 @@ class MainViewModel(
                 repository.observeFinesWithMetadata()
                     .catch { }
                     .collect { update ->
-                        _fines.value = update.items
+                        val localFines = repository.loadLocalFines()
+                        val merged = (update.items + localFines)
+                            .filter { it.id !in deletedDocIds }
+                            .distinctBy { it.id }
+                        _fines.value = merged
+                        repository.saveLocalFines(merged)
                         _pendingFineIds.value = update.pendingDocumentIds
                     }
             }
@@ -414,7 +531,16 @@ class MainViewModel(
             launch {
                 repository.observeFundLedger()
                     .catch { }
-                    .collect { _fundLedger.value = it }
+                    .collect { cloudLedger ->
+                        val localLedger = repository.loadLocalFundLedger()
+                        val merged = (cloudLedger + localLedger)
+                            .filter { it.id !in deletedDocIds }
+                            .distinctBy {
+                                it.id.ifBlank { "${it.date}_${it.description}_${it.moneyIn}_${it.moneyOut}" }
+                            }
+                        _fundLedger.value = merged
+                        repository.saveLocalFundLedger(merged)
+                    }
             }
 
             launch {
@@ -435,7 +561,10 @@ class MainViewModel(
                     .collect { s ->
                         if (s != null) {
                             _appSettings.value = s
-                            checkForAppUpdates(force = false)
+                            repository.saveLocalAppSettings(s)
+                            if (s.autoUpdateEnabled) {
+                                checkForAppUpdates(force = false)
+                            }
                         }
                     }
             }
@@ -507,9 +636,14 @@ class MainViewModel(
             var previouslyOnline = _isOnline.value
             repository.observeConnectivity().collect { online ->
                 _isOnline.value = online
-                if (online && !previouslyOnline && repository.getCurrentUser() != null) {
-                    // Connectivity just returned — flush Room queue & Firestore persistent write queue automatically
-                    syncPendingOfflineEntries()
+                if (online && !previouslyOnline) {
+                    if (repository.getCurrentUser() != null) {
+                        // Connectivity just returned — flush Room queue & Firestore persistent write queue automatically
+                        syncPendingOfflineEntries()
+                    }
+                    if (_appSettings.value.autoUpdateEnabled) {
+                        checkForAppUpdates(force = false)
+                    }
                 }
                 previouslyOnline = online
             }
@@ -592,7 +726,7 @@ class MainViewModel(
             }.joinToString("")
             ascii.filter { it.isDigit() }.toIntOrNull() ?: 0
         } ?: 0
-        return (maxSerial + 1).toString()
+        return (maxOf(maxSerial, currentMembers.size) + 1).toString()
     }
 
     fun registerMember(
@@ -659,9 +793,8 @@ class MainViewModel(
                     }
                 _members.value = updated
                 _membersUiState.value = UiState.Success(updated)
-                if (repository.getCurrentUser() == null) {
-                    repository.saveLocalMembers(updated)
-                } else {
+                repository.saveLocalMembers(updated)
+                if (repository.getCurrentUser() != null) {
                     try {
                         repository.cacheMembersInRoom(updated)
                     } catch (_: Exception) {
@@ -679,17 +812,25 @@ class MainViewModel(
     }
 
     fun addMember(member: Member, onSuccess: () -> Unit, onError: (String) -> Unit) {
-        val newMember = if (member.id.isBlank()) {
-            member.copy(id = "mem_${System.currentTimeMillis()}", createdBy = currentUserId)
-        } else member
-        val updated = (_members.value + newMember).sortedBy {
-            it.memberSerial.filter { ch -> ch.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
-        }
+        val resolvedSerial = member.memberSerial.trim().ifBlank { suggestNextMemberSerial() }
+        val resolvedJoinDate = member.joinDate.trim().ifBlank { com.example.util.BengaliUtils.getCurrentDateStr() }
+        val newMember = member.copy(
+            id = member.id.ifBlank { "mem_${System.currentTimeMillis()}" },
+            memberSerial = resolvedSerial,
+            name = member.name.trim(),
+            area = member.area.trim().ifBlank { "যাদবপুর উত্তর" },
+            joinDate = resolvedJoinDate,
+            weeklySavingsAmount = if (member.weeklySavingsAmount > 0.0) member.weeklySavingsAmount else 100.0,
+            createdBy = member.createdBy.ifBlank { currentUserId }
+        )
+        val updated = (_members.value + newMember)
+            .distinctBy { it.id }
+            .sortedBy {
+                it.memberSerial.filter { ch -> ch.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
+            }
         _members.value = updated
         _membersUiState.value = UiState.Success(updated)
-        if (repository.getCurrentUser() == null) {
-            repository.saveLocalMembers(updated)
-        }
+        repository.saveLocalMembers(updated)
         onSuccess()
         viewModelScope.launch {
             try {
@@ -710,13 +851,12 @@ class MainViewModel(
         val updated = _members.value.map { if (it.id == member.id) member else it }
         _members.value = updated
         _membersUiState.value = UiState.Success(updated)
-        if (repository.getCurrentUser() == null) {
-            repository.saveLocalMembers(updated)
-        }
+        repository.saveLocalMembers(updated)
         onSuccess()
         viewModelScope.launch {
             try {
                 if (repository.getCurrentUser() != null) {
+                    repository.cacheMembersInRoom(updated)
                     repository.updateMember(member)
                 }
             } catch (_: Exception) {
@@ -733,14 +873,17 @@ class MainViewModel(
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        val normalizedDate = com.example.util.DailyAccountCalculator.normalizeDateKey(collectionDate)
+            .ifBlank { collectionDate.trim() }
         val isOfficer = _userRole.value == UserRole.FIELD_OFFICER
         val existingInSameWeek = _savingsRecords.value.firstOrNull {
             (it.memberId == member.id || it.memberName == member.name) &&
                 it.status != TransactionStatus.REJECTED.name &&
-                com.example.util.SavingsAndFineCalculator.isSameWeek(it.collectionDate, collectionDate)
+                (com.example.util.DailyAccountCalculator.normalizeDateKey(it.collectionDate) == normalizedDate ||
+                    com.example.util.SavingsAndFineCalculator.isSameWeek(it.collectionDate, normalizedDate))
         }
         if (existingInSameWeek != null) {
-            onError("এই সদস্যের সঞ্চয় এই সপ্তাহে (${existingInSameWeek.collectionDate}) ইতিমধ্যেই সাবমিট করা হয়েছে। এক সপ্তাহে দুইবার সাবমিট করা যাবে না।")
+            onError("${member.name}-এর সঞ্চয় এই তারিখে/সপ্তাহে (${existingInSameWeek.collectionDate}) ইতিমধ্যেই সাবমিট করা হয়েছে। এক তারিখে দুইবার সাবমিট করা যাবে না।")
             return
         }
         val officerName = _currentUserProfile.value?.displayName ?: if (isOfficer) "মাঠ কর্মকর্তা" else "অ্যাডমিন"
@@ -749,7 +892,7 @@ class MainViewModel(
         val orderedDates = com.example.util.SavingsAndFineCalculator.sortDateStrings(
             _collectionPeriods.value.map { it.dateStr } +
                 _savingsRecords.value.map { it.collectionDate } +
-                listOf(collectionDate)
+                listOf(normalizedDate)
         )
 
         val allocationResult = if (isOfficer) {
@@ -757,7 +900,7 @@ class MainViewModel(
             com.example.util.SavingsAllocationResult(
                 allocations = listOf(
                     com.example.util.DateSavingsAllocation(
-                        collectionDate = collectionDate,
+                        collectionDate = normalizedDate,
                         newTotalAmount = amount,
                         addedDelta = amount,
                         isCatchUpForMissedWeek = false
@@ -768,7 +911,7 @@ class MainViewModel(
         } else {
             com.example.util.SavingsAndFineCalculator.allocateSavingsPayment(
                 member = member,
-                targetDate = collectionDate,
+                targetDate = normalizedDate,
                 enteredAmount = amount,
                 orderedDates = orderedDates,
                 existingRecords = _savingsRecords.value
@@ -807,15 +950,15 @@ class MainViewModel(
             netNewCash += alloc.addedDelta
         }
         _savingsRecords.value = currentList
+        repository.saveLocalSavings(currentList)
 
-        // Generate 10 BDT fine if missed (0.0) on collectionDate or earlier missed dates
         val generatedFines = mutableListOf<FineRecord>()
         if (amount <= 0.0) {
-            val fineDate = com.example.util.SavingsAndFineCalculator.resolveFineAppliedDate(collectionDate, orderedDates)
+            val appliedDate = com.example.util.SavingsAndFineCalculator.resolveFineAppliedDate(normalizedDate, orderedDates)
             val fine = com.example.util.SavingsAndFineCalculator.buildSavingsFineRecord(
                 member = member,
-                missedDate = collectionDate,
-                appliedDate = fineDate,
+                missedDate = normalizedDate,
+                appliedDate = appliedDate,
                 officerId = currentUserId,
                 officerName = officerName
             )
@@ -823,50 +966,49 @@ class MainViewModel(
                 generatedFines.add(fine)
             }
         }
-        for (catchDate in allocationResult.catchUpDates) {
-            val fineId = "fine_sav_${member.id}_${catchDate.replace("/", "-")}"
-            if (_fines.value.none { it.id == fineId }) {
-                val appliedDate = com.example.util.SavingsAndFineCalculator.resolveFineAppliedDate(catchDate, orderedDates)
-                generatedFines.add(
-                    com.example.util.SavingsAndFineCalculator.buildSavingsFineRecord(
-                        member = member,
-                        missedDate = catchDate,
-                        appliedDate = appliedDate,
-                        officerId = currentUserId,
-                        officerName = officerName
-                    )
-                )
+        for (missedPrev in allocationResult.catchUpDates) {
+            val appliedDate = com.example.util.SavingsAndFineCalculator.resolveFineAppliedDate(missedPrev, orderedDates)
+            val fine = com.example.util.SavingsAndFineCalculator.buildSavingsFineRecord(
+                member = member,
+                missedDate = missedPrev,
+                appliedDate = appliedDate,
+                officerId = currentUserId,
+                officerName = officerName
+            )
+            if (_fines.value.none { it.id == fine.id } && generatedFines.none { it.id == fine.id }) {
+                generatedFines.add(fine)
             }
         }
         mergeGeneratedFinesLocally(generatedFines)
 
+        if (status == TransactionStatus.APPROVED.name && netNewCash > 0.0) {
+            val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+            val descSuffix = if (allocationResult.catchUpDates.isNotEmpty()) {
+                " [বকেয়া সহ]"
+            } else ""
+            val recordRefId = "${member.id}_${normalizedDate.replace("/", "-")}"
+            val newLedger = _fundLedger.value + FundLedgerEntry(
+                id = "ledger_$recordRefId",
+                date = normalizedDate,
+                description = "$normalizedDate সঞ্চয় (${member.name})$descSuffix",
+                moneyIn = netNewCash,
+                moneyOut = 0.0,
+                balance = prevBalance + netNewCash,
+                referenceId = recordRefId,
+                type = LedgerType.SAVINGS_COLLECTION.name,
+                createdBy = currentUserId
+            )
+            _fundLedger.value = newLedger
+            repository.saveLocalFundLedger(newLedger)
+        }
+
         if (repository.getCurrentUser() == null) {
-            repository.saveLocalSavings(currentList)
-            if (status == TransactionStatus.APPROVED.name && netNewCash > 0.0) {
-                val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-                val descSuffix = if (allocationResult.catchUpDates.isNotEmpty()) {
-                    " [বকেয়া সহ]"
-                } else ""
-                val newLedger = _fundLedger.value + FundLedgerEntry(
-                    id = "ledger_${member.id}_${collectionDate.replace("/", "-")}_${System.currentTimeMillis()}",
-                    date = collectionDate,
-                    description = "$collectionDate সঞ্চয় (${member.name})$descSuffix",
-                    moneyIn = netNewCash,
-                    moneyOut = 0.0,
-                    balance = prevBalance + netNewCash,
-                    referenceId = "${member.id}_${collectionDate.replace("/", "-")}",
-                    type = LedgerType.SAVINGS_COLLECTION.name,
-                    createdBy = currentUserId
-                )
-                _fundLedger.value = newLedger
-                repository.saveLocalFundLedger(newLedger)
-            }
             if (isOfficer) {
                 notifyAdminOfOfficerSubmission(
                     title = "নতুন সঞ্চয় অনুমোদনের অনুরোধ",
-                    body = "$officerName সদস্য ${member.name}-এর $collectionDate তারিখের ৳${amount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
+                    body = "$officerName সদস্য ${member.name}-এর $normalizedDate তারিখের ৳${amount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
                     transactionType = "SAVINGS",
-                    transactionId = "${member.id}_${collectionDate.replace("/", "-")}",
+                    transactionId = "${member.id}_${normalizedDate.replace("/", "-")}",
                     memberName = member.name,
                     amount = amount,
                     officerName = officerName
@@ -887,7 +1029,7 @@ class MainViewModel(
                 onSuccess()
                 if (repository.isOnline()) {
                     repository.recordSavingsBatchEntries(
-                        primaryDate = collectionDate,
+                        primaryDate = normalizedDate,
                         recordsToWrite = enqueuedRecords,
                         netNewCashCollected = netNewCash,
                         isOfficer = isOfficer
@@ -898,9 +1040,9 @@ class MainViewModel(
                     if (isOfficer) {
                         notifyAdminOfOfficerSubmission(
                             title = "নতুন সঞ্চয় অনুমোদনের অনুরোধ",
-                            body = "$officerName সদস্য ${member.name}-এর $collectionDate তারিখের ৳${amount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
+                            body = "$officerName সদস্য ${member.name}-এর $normalizedDate তারিখের ৳${amount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
                             transactionType = "SAVINGS",
-                            transactionId = "${member.id}_${collectionDate.replace("/", "-")}",
+                            transactionId = "${member.id}_${normalizedDate.replace("/", "-")}",
                             memberName = member.name,
                             amount = amount,
                             officerName = officerName
@@ -933,18 +1075,21 @@ class MainViewModel(
             return
         }
 
+        val normalizedDate = com.example.util.DailyAccountCalculator.normalizeDateKey(collectionDate)
+            .ifBlank { collectionDate.trim() }
         val isOfficer = _userRole.value == UserRole.FIELD_OFFICER
-        // Enforce once-per-week rule: exclude members who already have a non-rejected record in the same week
+        // Enforce once-per-date/week rule: exclude members who already have a non-rejected record on this date or week
         val filteredEntries = entries.filter { (member, _) ->
             _savingsRecords.value.none {
                 (it.memberId == member.id || it.memberName == member.name) &&
                     it.status != TransactionStatus.REJECTED.name &&
-                    com.example.util.SavingsAndFineCalculator.isSameWeek(it.collectionDate, collectionDate)
+                    (com.example.util.DailyAccountCalculator.normalizeDateKey(it.collectionDate) == normalizedDate ||
+                        com.example.util.SavingsAndFineCalculator.isSameWeek(it.collectionDate, normalizedDate))
             }
         }
 
         if (filteredEntries.isEmpty()) {
-            onError("এই সপ্তাহে ($collectionDate) ইতিমধ্যেই সঞ্চয় সাবমিট করা হয়েছে। এক সপ্তাহে দুইবার সাবমিট করা যাবে না।")
+            onError("এই তারিখে ($normalizedDate) ইতিমধ্যেই সঞ্চয় সাবমিট করা হয়েছে। এক তারিখে দুইবার সাবমিট করা যাবে না।")
             return
         }
 
@@ -1057,35 +1202,38 @@ class MainViewModel(
             }
         }
         _savingsRecords.value = updatedList
+        repository.saveLocalSavings(updatedList)
         mergeGeneratedFinesLocally(generatedFines)
 
         val paidCount = filteredEntries.count { it.second > 0.0 }
         val totalEnteredAmount = filteredEntries.sumOf { it.second }
 
+        if (status == TransactionStatus.APPROVED.name && netNewCashTotal > 0.0) {
+            val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+            val cleanRef = normalizedDate.replace("/", "-")
+            val ledgerId = if (recordsToWrite.size == 1) "ledger_${recordsToWrite.first().id}" else "ledger_batch_$cleanRef"
+            val newLedger = _fundLedger.value + FundLedgerEntry(
+                id = ledgerId,
+                date = normalizedDate,
+                description = "$normalizedDate সাপ্তাহিক সঞ্চয় আদায় (${paidCount} জন)",
+                moneyIn = netNewCashTotal,
+                moneyOut = 0.0,
+                balance = prevBalance + netNewCashTotal,
+                referenceId = cleanRef,
+                type = LedgerType.SAVINGS_COLLECTION.name,
+                createdBy = currentUserId
+            )
+            _fundLedger.value = newLedger
+            repository.saveLocalFundLedger(newLedger)
+        }
+
         if (repository.getCurrentUser() == null) {
-            repository.saveLocalSavings(updatedList)
-            if (status == TransactionStatus.APPROVED.name && netNewCashTotal > 0.0) {
-                val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-                val newLedger = _fundLedger.value + FundLedgerEntry(
-                    id = "ledger_batch_${collectionDate.replace("/", "-")}_${System.currentTimeMillis()}",
-                    date = collectionDate,
-                    description = "$collectionDate সাপ্তাহিক সঞ্চয় আদায় (${paidCount} জন)",
-                    moneyIn = netNewCashTotal,
-                    moneyOut = 0.0,
-                    balance = prevBalance + netNewCashTotal,
-                    referenceId = collectionDate.replace("/", "-"),
-                    type = LedgerType.SAVINGS_COLLECTION.name,
-                    createdBy = currentUserId
-                )
-                _fundLedger.value = newLedger
-                repository.saveLocalFundLedger(newLedger)
-            }
             if (isOfficer) {
                 notifyAdminOfOfficerSubmission(
                     title = "নতুন সাপ্তাহিক সঞ্চয় অনুমোদনের অনুরোধ",
-                    body = "$officerName $collectionDate তারিখে ${paidCount} জন সদস্যের মোট ৳${totalEnteredAmount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
+                    body = "$officerName $normalizedDate তারিখে ${paidCount} জন সদস্যের মোট ৳${totalEnteredAmount.toInt()} সঞ্চয় জমা পাঠিয়েছেন।",
                     transactionType = "SAVINGS_BATCH",
-                    transactionId = collectionDate.replace("/", "-"),
+                    transactionId = normalizedDate.replace("/", "-"),
                     memberName = "${paidCount} জন সদস্য",
                     amount = totalEnteredAmount,
                     officerName = officerName
@@ -1148,9 +1296,7 @@ class MainViewModel(
             }
         }
         _fines.value = merged
-        if (repository.getCurrentUser() == null) {
-            repository.saveLocalFines(merged)
-        }
+        repository.saveLocalFines(merged)
     }
 
     fun approveSavings(record: SavingsRecord, onSuccess: () -> Unit, onError: (String) -> Unit) {
@@ -1174,47 +1320,48 @@ class MainViewModel(
             )
         } else null
 
-        if (repository.getCurrentUser() == null) {
-            val updated = _savingsRecords.value.toMutableList()
-            if (allocationResult != null && allocationResult.catchUpDates.isNotEmpty() && member != null) {
-                for (alloc in allocationResult.allocations) {
-                    val recId = "${member.id}_${alloc.collectionDate.replace("/", "-")}"
-                    val newRec = record.copy(
-                        id = recId,
-                        collectionDate = alloc.collectionDate,
-                        amount = alloc.newTotalAmount,
-                        isPaid = alloc.newTotalAmount > 0.0,
-                        status = TransactionStatus.APPROVED.name,
-                        approvedBy = currentUserId
-                    )
-                    val idx = updated.indexOfFirst { it.id == recId || (it.memberId == member.id && it.collectionDate == alloc.collectionDate) }
-                    if (idx >= 0) updated[idx] = newRec else updated.add(newRec)
-                }
-            } else {
-                for (i in updated.indices) {
-                    if (updated[i].id == record.id) {
-                        updated[i] = updated[i].copy(status = TransactionStatus.APPROVED.name, approvedBy = currentUserId)
-                    }
-                }
-            }
-            _savingsRecords.value = updated
-            repository.saveLocalSavings(updated)
-            if (record.amount > 0.0) {
-                val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-                val newLedger = _fundLedger.value + FundLedgerEntry(
-                    id = "ledger_app_${record.id}_${System.currentTimeMillis()}",
-                    date = record.collectionDate,
-                    description = "${record.collectionDate} সঞ্চয় (${record.memberName})",
-                    moneyIn = record.amount,
-                    moneyOut = 0.0,
-                    balance = prevBalance + record.amount,
-                    referenceId = record.id,
-                    type = LedgerType.SAVINGS_COLLECTION.name,
-                    createdBy = currentUserId
+        val updated = _savingsRecords.value.toMutableList()
+        if (allocationResult != null && allocationResult.catchUpDates.isNotEmpty() && member != null) {
+            for (alloc in allocationResult.allocations) {
+                val recId = "${member.id}_${alloc.collectionDate.replace("/", "-")}"
+                val newRec = record.copy(
+                    id = recId,
+                    collectionDate = alloc.collectionDate,
+                    amount = alloc.newTotalAmount,
+                    isPaid = alloc.newTotalAmount > 0.0,
+                    status = TransactionStatus.APPROVED.name,
+                    approvedBy = currentUserId
                 )
-                _fundLedger.value = newLedger
-                repository.saveLocalFundLedger(newLedger)
+                val idx = updated.indexOfFirst { it.id == recId || (it.memberId == member.id && it.collectionDate == alloc.collectionDate) }
+                if (idx >= 0) updated[idx] = newRec else updated.add(newRec)
             }
+        } else {
+            for (i in updated.indices) {
+                if (updated[i].id == record.id) {
+                    updated[i] = updated[i].copy(status = TransactionStatus.APPROVED.name, approvedBy = currentUserId)
+                }
+            }
+        }
+        _savingsRecords.value = updated
+        repository.saveLocalSavings(updated)
+        if (record.amount > 0.0) {
+            val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+            val newLedger = _fundLedger.value + FundLedgerEntry(
+                id = "ledger_app_${record.id}",
+                date = record.collectionDate,
+                description = "${record.collectionDate} সঞ্চয় (${record.memberName})",
+                moneyIn = record.amount,
+                moneyOut = 0.0,
+                balance = prevBalance + record.amount,
+                referenceId = record.id,
+                type = LedgerType.SAVINGS_COLLECTION.name,
+                createdBy = currentUserId
+            )
+            _fundLedger.value = newLedger
+            repository.saveLocalFundLedger(newLedger)
+        }
+
+        if (repository.getCurrentUser() == null) {
             onSuccess()
             return
         }
@@ -1252,14 +1399,15 @@ class MainViewModel(
             onError("প্রত্যাখ্যান শুধুমাত্র অ্যাডমিন করতে পারবেন")
             return
         }
+        val updated = _savingsRecords.value.map {
+            if (it.id == record.id) {
+                it.copy(status = TransactionStatus.REJECTED.name, approvedBy = currentUserId)
+            } else it
+        }
+        _savingsRecords.value = updated
+        repository.saveLocalSavings(updated)
+
         if (repository.getCurrentUser() == null) {
-            val updated = _savingsRecords.value.map {
-                if (it.id == record.id) {
-                    it.copy(status = TransactionStatus.REJECTED.name, approvedBy = currentUserId)
-                } else it
-            }
-            _savingsRecords.value = updated
-            repository.saveLocalSavings(updated)
             onSuccess()
             return
         }
@@ -1278,25 +1426,33 @@ class MainViewModel(
             onError("নতুন কালেকশন তারিখ শুধুমাত্র অ্যাডমিন যোগ করতে পারবেন")
             return
         }
+        if (com.example.util.SavingsAndFineCalculator.parseDateMillis(dateStr) == null) {
+            onError("সঠিক তারিখ দিন (যেমন: 11/11/26)")
+            return
+        }
+        val cleanDate = com.example.util.DailyAccountCalculator.normalizeDateKey(dateStr)
         val newPeriod = CollectionPeriod(
-            id = "period_${dateStr.replace("/", "-")}",
-            dateStr = dateStr,
+            id = "period_${cleanDate.replace("/", "-")}",
+            dateStr = cleanDate,
             monthYear = monthYear,
             isClosed = false,
             totalSavings = 0.0
         )
-        if (_collectionPeriods.value.none { it.dateStr == dateStr }) {
+        if (_collectionPeriods.value.none {
+                com.example.util.DailyAccountCalculator.normalizeDateKey(it.dateStr) == cleanDate
+            }
+        ) {
             val updated = _collectionPeriods.value + newPeriod
             _collectionPeriods.value = updated
-            if (repository.getCurrentUser() == null) {
-                repository.saveLocalCollectionPeriods(updated)
-            }
+            repository.saveLocalCollectionPeriods(updated)
         }
+        _selectedSavingsDate.value = cleanDate
+        repository.saveSelectedSavingsDate(cleanDate)
         onSuccess()
         viewModelScope.launch {
             try {
                 if (repository.getCurrentUser() != null) {
-                    repository.addCollectionPeriod(dateStr, monthYear)
+                    repository.addCollectionPeriod(cleanDate, monthYear)
                 }
             } catch (e: Exception) {
                 onError(e.message ?: "তারিখ যোগ করতে সমস্যা হয়েছে")
@@ -1315,25 +1471,34 @@ class MainViewModel(
             onError("তারিখ আপডেট শুধুমাত্র অ্যাডমিন করতে পারবেন")
             return
         }
-        val cleanOld = oldDate.trim()
-        val cleanNew = newDate.trim()
-        if (cleanNew.isBlank() || com.example.util.SavingsAndFineCalculator.parseDateMillis(cleanNew) == null) {
+        if (newDate.isBlank() || com.example.util.SavingsAndFineCalculator.parseDateMillis(newDate) == null) {
             onError("সঠিক তারিখ দিন (যেমন: 14/11/26)")
             return
         }
+        val cleanOld = com.example.util.DailyAccountCalculator.normalizeDateKey(oldDate)
+        val cleanNew = com.example.util.DailyAccountCalculator.normalizeDateKey(newDate)
         if (cleanOld == cleanNew) {
             onSuccess()
             return
         }
-        val existingDates = (_collectionPeriods.value.map { it.dateStr } + _savingsRecords.value.map { it.collectionDate }).distinct()
+        val existingDates = (_collectionPeriods.value.map {
+            com.example.util.DailyAccountCalculator.normalizeDateKey(it.dateStr)
+        } + _savingsRecords.value.map {
+            com.example.util.DailyAccountCalculator.normalizeDateKey(it.collectionDate)
+        }).distinct()
         if (cleanNew in existingDates) {
             onError("এই তারিখটি ($cleanNew) ইতিমধ্যেই শিটে রয়েছে")
             return
         }
 
-        val updatedPeriods = if (_collectionPeriods.value.any { it.dateStr == cleanOld }) {
+        val updatedPeriods = if (_collectionPeriods.value.any {
+                com.example.util.DailyAccountCalculator.normalizeDateKey(it.dateStr) == cleanOld
+            }
+        ) {
             _collectionPeriods.value.map {
-                if (it.dateStr == cleanOld) it.copy(dateStr = cleanNew) else it
+                if (com.example.util.DailyAccountCalculator.normalizeDateKey(it.dateStr) == cleanOld) {
+                    it.copy(dateStr = cleanNew)
+                } else it
             }
         } else {
             _collectionPeriods.value + CollectionPeriod(
@@ -1348,7 +1513,7 @@ class MainViewModel(
         val oldIdsToDelete = mutableListOf<String>()
         val changedSavings = mutableListOf<SavingsRecord>()
         val updatedSavings = _savingsRecords.value.map { rec ->
-            if (rec.collectionDate == cleanOld) {
+            if (com.example.util.DailyAccountCalculator.normalizeDateKey(rec.collectionDate) == cleanOld) {
                 val newId = "${rec.memberId}_${cleanNew.replace("/", "-")}"
                 if (rec.id.isNotBlank() && rec.id != newId) {
                     oldIdsToDelete.add(rec.id)
@@ -1361,10 +1526,12 @@ class MainViewModel(
 
         val changedFines = mutableListOf<FineRecord>()
         val updatedFines = _fines.value.map { fine ->
-            if (fine.fineType == FineType.SAVINGS.name && (fine.missedDate == cleanOld || fine.fineDate == cleanOld)) {
+            val normMissed = com.example.util.DailyAccountCalculator.normalizeDateKey(fine.missedDate)
+            val normFine = com.example.util.DailyAccountCalculator.normalizeDateKey(fine.fineDate)
+            if (normMissed == cleanOld || normFine == cleanOld || fine.missedDate == cleanOld || fine.fineDate == cleanOld) {
                 val updated = fine.copy(
-                    missedDate = if (fine.missedDate == cleanOld) cleanNew else fine.missedDate,
-                    fineDate = if (fine.fineDate == cleanOld) cleanNew else fine.fineDate,
+                    missedDate = if (normMissed == cleanOld || fine.missedDate == cleanOld) cleanNew else fine.missedDate,
+                    fineDate = if (normFine == cleanOld || fine.fineDate == cleanOld) cleanNew else fine.fineDate,
                     referenceId = if (fine.referenceId == cleanOld) cleanNew else fine.referenceId
                 )
                 changedFines.add(updated)
@@ -1384,16 +1551,39 @@ class MainViewModel(
             } else entry
         }
 
+        val updatedInstallments = _loanInstallments.value.map { inst ->
+            if (com.example.util.DailyAccountCalculator.normalizeDateKey(inst.installmentDate) == cleanOld) {
+                val newId = "inst_${inst.loanId}_${cleanNew.replace("/", "-")}"
+                inst.copy(id = newId, installmentDate = cleanNew)
+            } else inst
+        }
+
         _collectionPeriods.value = updatedPeriods
         _savingsRecords.value = updatedSavings
+        _loanInstallments.value = updatedInstallments
         _fines.value = updatedFines
         _fundLedger.value = updatedLedger
+        if (com.example.util.DailyAccountCalculator.normalizeDateKey(_selectedSavingsDate.value) == cleanOld) {
+            _selectedSavingsDate.value = cleanNew
+            repository.saveSelectedSavingsDate(cleanNew)
+        }
+        if (com.example.util.DailyAccountCalculator.normalizeDateKey(_selectedLoanDate.value) == cleanOld) {
+            _selectedLoanDate.value = cleanNew
+            repository.saveSelectedLoanDate(cleanNew)
+        }
+        if (com.example.util.DailyAccountCalculator.normalizeDateKey(_selectedFineDate.value) == cleanOld) {
+            _selectedFineDate.value = cleanNew
+            repository.saveSelectedFineDate(cleanNew)
+        }
+
+        // Always persist locally in both local & cloud modes so updated dates survive restarts/offline
+        repository.saveLocalCollectionPeriods(updatedPeriods)
+        repository.saveLocalSavings(updatedSavings)
+        repository.saveLocalLoanInstallments(updatedInstallments)
+        repository.saveLocalFines(updatedFines)
+        repository.saveLocalFundLedger(updatedLedger)
 
         if (repository.getCurrentUser() == null) {
-            repository.saveLocalCollectionPeriods(updatedPeriods)
-            repository.saveLocalSavings(updatedSavings)
-            repository.saveLocalFines(updatedFines)
-            repository.saveLocalFundLedger(updatedLedger)
             onSuccess()
             return
         }
@@ -1467,14 +1657,17 @@ class MainViewModel(
         val nextDate = loan.nextInstallmentDate.ifBlank {
             com.example.util.BengaliUtils.addDaysToDateStr(loan.loanDate, 7)
         }
-        val normalizedLoan = loan.copy(
+        val localId = loan.id.ifBlank { "loan_${System.currentTimeMillis()}" }
+        val savedLoan = loan.copy(
+            id = localId,
             memberId = resolvedMemberId,
             memberSerial = resolvedSerial,
             totalPayable = totalPayable,
             remainingLoan = totalPayable,
             totalPaid = 0.0,
             nextInstallmentDate = nextDate,
-            status = LoanStatus.ACTIVE.name
+            status = LoanStatus.ACTIVE.name,
+            createdBy = currentUserId
         )
 
         viewModelScope.launch {
@@ -1486,52 +1679,43 @@ class MainViewModel(
                         memberSerial = resolvedSerial,
                         createdBy = currentUserId
                     )
-                    val updatedMembers = (_members.value + memberToSave).sortedBy {
-                        it.memberSerial.filter { ch -> ch.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
-                    }
+                    val updatedMembers = (_members.value + memberToSave)
+                        .distinctBy { it.id }
+                        .sortedBy {
+                            it.memberSerial.filter { ch -> ch.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
+                        }
                     _members.value = updatedMembers
                     _membersUiState.value = UiState.Success(updatedMembers)
-                    if (repository.getCurrentUser() == null) {
-                        repository.saveLocalMembers(updatedMembers)
-                    } else {
+                    repository.saveLocalMembers(updatedMembers)
+                    if (repository.getCurrentUser() != null) {
                         repository.addMember(memberToSave)
                     }
                 }
 
-                if (repository.getCurrentUser() != null) {
-                    val createdId = repository.createLoan(normalizedLoan)
-                    if (_loans.value.none { it.id == createdId }) {
-                        _loans.value = listOf(normalizedLoan.copy(id = createdId)) + _loans.value
-                    }
-                    onSuccess()
-                } else {
-                    // Local AuthSession Admin mode
-                    val localId = "loan_${System.currentTimeMillis()}"
-                    val savedLoan = normalizedLoan.copy(
-                        id = localId,
-                        createdBy = currentUserId
-                    )
-                    val updatedLoans = listOf(savedLoan) + _loans.value
-                    _loans.value = updatedLoans
-                    repository.saveLocalLoans(updatedLoans)
+                val updatedLoans = (listOf(savedLoan) + _loans.value).distinctBy { it.id }
+                _loans.value = updatedLoans
+                repository.saveLocalLoans(updatedLoans)
 
-                    val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-                    val newLedger = FundLedgerEntry(
-                        id = "ledger_$localId",
-                        date = savedLoan.loanDate,
-                        description = "ঋণ বিতরণ (${savedLoan.memberName})",
-                        moneyIn = 0.0,
-                        moneyOut = savedLoan.principal,
-                        balance = prevBalance - savedLoan.principal,
-                        referenceId = localId,
-                        type = LedgerType.LOAN_DISBURSEMENT.name,
-                        createdBy = currentUserId
-                    )
-                    val updatedLedger = _fundLedger.value + newLedger
-                    _fundLedger.value = updatedLedger
-                    repository.saveLocalFundLedger(updatedLedger)
-                    onSuccess()
+                val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+                val newLedger = FundLedgerEntry(
+                    id = "ledger_$localId",
+                    date = savedLoan.loanDate,
+                    description = "ঋণ বিতরণ (${savedLoan.memberName})",
+                    moneyIn = 0.0,
+                    moneyOut = savedLoan.principal,
+                    balance = prevBalance - savedLoan.principal,
+                    referenceId = localId,
+                    type = LedgerType.LOAN_DISBURSEMENT.name,
+                    createdBy = currentUserId
+                )
+                val updatedLedger = _fundLedger.value + newLedger
+                _fundLedger.value = updatedLedger
+                repository.saveLocalFundLedger(updatedLedger)
+
+                if (repository.getCurrentUser() != null) {
+                    repository.createLoan(savedLoan)
                 }
+                onSuccess()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1547,19 +1731,21 @@ class MainViewModel(
             onError("কিস্তির পরিমাণ শূন্যের বেশি হতে হবে")
             return
         }
-        val duplicateSameWeek = _loanInstallments.value.any { existing ->
+        val cleanDate = com.example.util.DailyAccountCalculator.normalizeDateKey(date).ifBlank { date.trim() }
+        val duplicateSameDateOrWeek = _loanInstallments.value.any { existing ->
             existing.loanId == loan.id &&
                 existing.status != TransactionStatus.REJECTED.name &&
-                com.example.util.SavingsAndFineCalculator.isSameWeek(existing.installmentDate, date)
+                (com.example.util.DailyAccountCalculator.normalizeDateKey(existing.installmentDate) == cleanDate ||
+                    com.example.util.SavingsAndFineCalculator.isSameWeek(existing.installmentDate, cleanDate))
         }
-        if (duplicateSameWeek) {
-            onError("এই ঋণের কিস্তি এই সপ্তাহে ($date) ইতিমধ্যেই সাবমিট করা হয়েছে। এক সপ্তাহে দুইবার সাবমিট করা যাবে না।")
+        if (duplicateSameDateOrWeek) {
+            onError("এই ঋণের কিস্তি এই তারিখে ($cleanDate) ইতিমধ্যেই সাবমিট করা হয়েছে। এক তারিখে দুইবার সাবমিট করা যাবে না।")
             return
         }
         val isOfficer = _userRole.value == UserRole.FIELD_OFFICER
         val officerName = _currentUserProfile.value?.displayName ?: if (isOfficer) "মাঠ কর্মকর্তা" else "অ্যাডমিন"
         val status = if (isOfficer) TransactionStatus.PENDING.name else TransactionStatus.APPROVED.name
-        val deterministicInstId = "inst_${loan.id}_${date.replace("/", "-")}"
+        val deterministicInstId = "inst_${loan.id}_${cleanDate.replace("/", "-")}"
         val serial = com.example.util.BengaliUtils.toBengaliDigits(
             _loanInstallments.value.count { it.loanId == loan.id } + 1
         )
@@ -1569,7 +1755,7 @@ class MainViewModel(
             memberId = loan.memberId,
             memberName = loan.memberName,
             serialNumber = serial,
-            installmentDate = date,
+            installmentDate = cleanDate,
             amount = amount,
             officerId = currentUserId,
             officerName = officerName,
@@ -1578,47 +1764,49 @@ class MainViewModel(
             approvedBy = if (status == TransactionStatus.APPROVED.name) currentUserId else ""
         )
 
+        val updatedInsts = (_loanInstallments.value + newInst).distinctBy { it.id }
+        _loanInstallments.value = updatedInsts
+        repository.saveLocalLoanInstallments(updatedInsts)
+
+        if (!isOfficer) {
+            val nextDate = com.example.util.BengaliUtils.addDaysToDateStr(cleanDate, 7)
+            val updatedLoans = _loans.value.map { existing ->
+                if (existing.id == loan.id) {
+                    val catchUp = com.example.util.SavingsAndFineCalculator.calculateLoanCatchUp(existing, amount)
+                    val newStatus = if (catchUp.isFullyPaid) LoanStatus.PAID.name else LoanStatus.ACTIVE.name
+                    existing.copy(
+                        totalPaid = catchUp.newTotalPaid,
+                        remainingLoan = catchUp.newRemainingLoan,
+                        missedInstallments = catchUp.remainingMissedInstallments,
+                        nextInstallmentDate = nextDate,
+                        status = newStatus
+                    )
+                } else existing
+            }
+            _loans.value = updatedLoans
+            repository.saveLocalLoans(updatedLoans)
+
+            val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+            val updatedLedger = _fundLedger.value + FundLedgerEntry(
+                id = "ledger_$deterministicInstId",
+                date = cleanDate,
+                description = "ঋণের কিস্তি আদায় (${loan.memberName})",
+                moneyIn = amount,
+                moneyOut = 0.0,
+                balance = prevBalance + amount,
+                referenceId = deterministicInstId,
+                type = LedgerType.LOAN_INSTALLMENT.name,
+                createdBy = currentUserId
+            )
+            _fundLedger.value = updatedLedger
+            repository.saveLocalFundLedger(updatedLedger)
+        }
+
         if (repository.getCurrentUser() == null) {
-            val updatedInsts = _loanInstallments.value + newInst
-            _loanInstallments.value = updatedInsts
-            repository.saveLocalLoanInstallments(updatedInsts)
-
-            if (!isOfficer) {
-                val nextDate = com.example.util.BengaliUtils.addDaysToDateStr(date, 7)
-                val updatedLoans = _loans.value.map { existing ->
-                    if (existing.id == loan.id) {
-                        val catchUp = com.example.util.SavingsAndFineCalculator.calculateLoanCatchUp(existing, amount)
-                        val newStatus = if (catchUp.isFullyPaid) LoanStatus.PAID.name else LoanStatus.ACTIVE.name
-                        existing.copy(
-                            totalPaid = catchUp.newTotalPaid,
-                            remainingLoan = catchUp.newRemainingLoan,
-                            missedInstallments = catchUp.remainingMissedInstallments,
-                            nextInstallmentDate = nextDate,
-                            status = newStatus
-                        )
-                    } else existing
-                }
-                _loans.value = updatedLoans
-                repository.saveLocalLoans(updatedLoans)
-
-                val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-                val updatedLedger = _fundLedger.value + FundLedgerEntry(
-                    id = "ledger_$deterministicInstId",
-                    date = date,
-                    description = "ঋণের কিস্তি আদায় (${loan.memberName})",
-                    moneyIn = amount,
-                    moneyOut = 0.0,
-                    balance = prevBalance + amount,
-                    referenceId = deterministicInstId,
-                    type = LedgerType.LOAN_INSTALLMENT.name,
-                    createdBy = currentUserId
-                )
-                _fundLedger.value = updatedLedger
-                repository.saveLocalFundLedger(updatedLedger)
-            } else {
+            if (isOfficer) {
                 notifyAdminOfOfficerSubmission(
                     title = "নতুন ঋণ কিস্তি অনুমোদনের অনুরোধ",
-                    body = "$officerName সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($date) পাঠিয়েছেন।",
+                    body = "$officerName সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($cleanDate) পাঠিয়েছেন।",
                     transactionType = "LOAN_INSTALLMENT",
                     transactionId = deterministicInstId,
                     memberName = loan.memberName,
@@ -1638,16 +1826,13 @@ class MainViewModel(
                     onError("এই ঋণের কিস্তি অফলাইন কিউতে ইতিমধ্যেই এই সপ্তাহে সংরক্ষিত রয়েছে।")
                     return@launch
                 }
-                if (_loanInstallments.value.none { it.id == newInst.id }) {
-                    _loanInstallments.value = _loanInstallments.value + newInst
-                }
 
                 if (repository.isOnline()) {
-                    repository.recordLoanInstallment(loan, date, amount, isOfficer, officerName)
+                    repository.recordLoanInstallment(loan, cleanDate, amount, isOfficer, officerName)
                     if (isOfficer) {
                         notifyAdminOfOfficerSubmission(
                             title = "নতুন ঋণ কিস্তি অনুমোদনের অনুরোধ",
-                            body = "$officerName সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($date) পাঠিয়েছেন।",
+                            body = "$officerName সদস্য ${loan.memberName}-এর ৳${amount.toInt()} ঋণের কিস্তি ($cleanDate) পাঠিয়েছেন।",
                             transactionType = "LOAN_INSTALLMENT",
                             transactionId = deterministicInstId,
                             memberName = loan.memberName,
@@ -1683,44 +1868,44 @@ class MainViewModel(
                     officerName = officerName
                 )
 
+                val instId = "inst_miss_${loan.id}_${missedDate.replace("/", "-")}_${System.currentTimeMillis()}"
+                val serial = com.example.util.BengaliUtils.toBengaliDigits(
+                    _loanInstallments.value.count { it.loanId == loan.id } + 1
+                )
+                val missedInst = LoanInstallment(
+                    id = instId,
+                    loanId = loan.id,
+                    memberId = loan.memberId,
+                    memberName = loan.memberName,
+                    serialNumber = serial,
+                    installmentDate = missedDate,
+                    amount = 0.0,
+                    isMissed = true,
+                    officerId = currentUserId,
+                    status = TransactionStatus.APPROVED.name,
+                    createdBy = currentUserId,
+                    approvedBy = currentUserId
+                )
+                val updatedInsts = _loanInstallments.value + missedInst
+                _loanInstallments.value = updatedInsts
+                repository.saveLocalLoanInstallments(updatedInsts)
+
+                val updatedLoans = _loans.value.map { existing ->
+                    if (existing.id == loan.id) {
+                        existing.copy(
+                            missedInstallments = existing.missedInstallments + 1,
+                            nextInstallmentDate = nextDueDate
+                        )
+                    } else existing
+                }
+                _loans.value = updatedLoans
+                repository.saveLocalLoans(updatedLoans)
+
+                mergeGeneratedFinesLocally(listOf(fineRecord))
+
                 if (repository.getCurrentUser() != null) {
-                    repository.recordMissedLoanInstallment(loan, missedDate)
+                    repository.recordMissedLoanInstallment(loan, missedDate, docId = instId)
                     repository.upsertFinesBatch(listOf(fineRecord))
-                } else {
-                    val instId = "inst_miss_${System.currentTimeMillis()}"
-                    val serial = com.example.util.BengaliUtils.toBengaliDigits(
-                        _loanInstallments.value.count { it.loanId == loan.id } + 1
-                    )
-                    val missedInst = LoanInstallment(
-                        id = instId,
-                        loanId = loan.id,
-                        memberId = loan.memberId,
-                        memberName = loan.memberName,
-                        serialNumber = serial,
-                        installmentDate = missedDate,
-                        amount = 0.0,
-                        isMissed = true,
-                        officerId = currentUserId,
-                        status = TransactionStatus.APPROVED.name,
-                        createdBy = currentUserId,
-                        approvedBy = currentUserId
-                    )
-                    val updatedInsts = _loanInstallments.value + missedInst
-                    _loanInstallments.value = updatedInsts
-                    repository.saveLocalLoanInstallments(updatedInsts)
-
-                    val updatedLoans = _loans.value.map { existing ->
-                        if (existing.id == loan.id) {
-                            existing.copy(
-                                missedInstallments = existing.missedInstallments + 1,
-                                nextInstallmentDate = nextDueDate
-                            )
-                        } else existing
-                    }
-                    _loans.value = updatedLoans
-                    repository.saveLocalLoans(updatedLoans)
-
-                    mergeGeneratedFinesLocally(listOf(fineRecord))
                 }
                 onSuccess()
             } catch (e: CancellationException) {
@@ -1736,45 +1921,46 @@ class MainViewModel(
             onError("অনুমোদন শুধুমাত্র অ্যাডমিন করতে পারবেন")
             return
         }
+        val updatedInsts = _loanInstallments.value.map {
+            if (it.id == installment.id) {
+                it.copy(status = TransactionStatus.APPROVED.name, approvedBy = currentUserId)
+            } else it
+        }
+        _loanInstallments.value = updatedInsts
+        repository.saveLocalLoanInstallments(updatedInsts)
+
+        val updatedLoans = _loans.value.map { existing ->
+            if (existing.id == installment.loanId) {
+                val catchUp = com.example.util.SavingsAndFineCalculator.calculateLoanCatchUp(existing, installment.amount)
+                val newStatus = if (catchUp.isFullyPaid) LoanStatus.PAID.name else LoanStatus.ACTIVE.name
+                existing.copy(
+                    totalPaid = catchUp.newTotalPaid,
+                    remainingLoan = catchUp.newRemainingLoan,
+                    missedInstallments = catchUp.remainingMissedInstallments,
+                    nextInstallmentDate = com.example.util.BengaliUtils.addDaysToDateStr(installment.installmentDate, 7),
+                    status = newStatus
+                )
+            } else existing
+        }
+        _loans.value = updatedLoans
+        repository.saveLocalLoans(updatedLoans)
+
+        val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+        val updatedLedger = _fundLedger.value + FundLedgerEntry(
+            id = "ledger_app_${installment.id}",
+            date = installment.installmentDate,
+            description = "ঋণের কিস্তি আদায় (${installment.memberName})",
+            moneyIn = installment.amount,
+            moneyOut = 0.0,
+            balance = prevBalance + installment.amount,
+            referenceId = installment.id,
+            type = LedgerType.LOAN_INSTALLMENT.name,
+            createdBy = currentUserId
+        )
+        _fundLedger.value = updatedLedger
+        repository.saveLocalFundLedger(updatedLedger)
+
         if (repository.getCurrentUser() == null) {
-            val updatedInsts = _loanInstallments.value.map {
-                if (it.id == installment.id) {
-                    it.copy(status = TransactionStatus.APPROVED.name, approvedBy = currentUserId)
-                } else it
-            }
-            _loanInstallments.value = updatedInsts
-            repository.saveLocalLoanInstallments(updatedInsts)
-
-            val updatedLoans = _loans.value.map { existing ->
-                if (existing.id == installment.loanId) {
-                    val catchUp = com.example.util.SavingsAndFineCalculator.calculateLoanCatchUp(existing, installment.amount)
-                    val newStatus = if (catchUp.isFullyPaid) LoanStatus.PAID.name else LoanStatus.ACTIVE.name
-                    existing.copy(
-                        totalPaid = catchUp.newTotalPaid,
-                        remainingLoan = catchUp.newRemainingLoan,
-                        missedInstallments = catchUp.remainingMissedInstallments,
-                        nextInstallmentDate = com.example.util.BengaliUtils.addDaysToDateStr(installment.installmentDate, 7),
-                        status = newStatus
-                    )
-                } else existing
-            }
-            _loans.value = updatedLoans
-            repository.saveLocalLoans(updatedLoans)
-
-            val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-            val updatedLedger = _fundLedger.value + FundLedgerEntry(
-                id = "ledger_app_${installment.id}_${System.currentTimeMillis()}",
-                date = installment.installmentDate,
-                description = "ঋণের কিস্তি আদায় (${installment.memberName})",
-                moneyIn = installment.amount,
-                moneyOut = 0.0,
-                balance = prevBalance + installment.amount,
-                referenceId = installment.id,
-                type = LedgerType.LOAN_INSTALLMENT.name,
-                createdBy = currentUserId
-            )
-            _fundLedger.value = updatedLedger
-            repository.saveLocalFundLedger(updatedLedger)
             onSuccess()
             return
         }
@@ -1799,15 +1985,34 @@ class MainViewModel(
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        if (amount <= 0.0) {
+            onError("জরিমানার পরিমাণ শূন্যের বেশি হতে হবে")
+            return
+        }
+        val cleanFineDate = com.example.util.DailyAccountCalculator.normalizeDateKey(fineDate).ifBlank { fineDate.trim() }
+        val cleanMissedDate = com.example.util.DailyAccountCalculator.normalizeDateKey(missedDate).ifBlank { cleanFineDate }
+        val duplicateSameDateOrWeek = _fines.value.any { existing ->
+            existing.status != TransactionStatus.REJECTED.name &&
+                existing.fineType == fineType.name &&
+                (existing.memberId == member.id || (member.id.isBlank() && existing.memberName == member.name)) &&
+                (com.example.util.DailyAccountCalculator.normalizeDateKey(existing.fineDate) == cleanFineDate ||
+                    com.example.util.SavingsAndFineCalculator.isSameWeek(existing.fineDate, cleanFineDate))
+        }
+        if (duplicateSameDateOrWeek) {
+            val typeLabel = if (fineType == FineType.SAVINGS) "সঞ্চয়" else "ঋণ"
+            onError("এই সদস্যের ($cleanFineDate) তারিখে $typeLabel জরিমানা ইতিমধ্যেই সাবমিট করা হয়েছে। এক তারিখে দুইবার সাবমিট করা যাবে না।")
+            return
+        }
         val officerName = _currentUserProfile.value?.displayName ?: "অ্যাডমিন"
-        val fineId = "fine_${fineType.name.lowercase()}_${member.id}_${fineDate.replace("/", "-")}_${System.currentTimeMillis()}"
+        val keyPart = member.id.ifBlank { member.name }
+        val fineId = "fine_${fineType.name.lowercase()}_${keyPart}_${cleanFineDate.replace("/", "-")}"
         val newFine = FineRecord(
             id = fineId,
             memberId = member.id,
             memberName = member.name,
             memberSerial = member.memberSerial,
-            fineDate = fineDate,
-            missedDate = missedDate.ifBlank { fineDate },
+            fineDate = cleanFineDate,
+            missedDate = cleanMissedDate,
             fineType = fineType.name,
             amount = amount,
             isPaid = isPaid,
@@ -1819,10 +2024,10 @@ class MainViewModel(
             createdBy = currentUserId
         )
 
-        val updated = _fines.value + newFine
+        val updated = (_fines.value + newFine).distinctBy { it.id }
         _fines.value = updated
+        repository.saveLocalFines(updated)
         if (repository.getCurrentUser() == null) {
-            repository.saveLocalFines(updated)
             onSuccess()
             return
         }
@@ -1846,8 +2051,8 @@ class MainViewModel(
             if (it.id == fine.id) it.copy(isPaid = isPaid, paidDate = if (isPaid) today else "") else it
         }
         _fines.value = updated
+        repository.saveLocalFines(updated)
         if (repository.getCurrentUser() == null) {
-            repository.saveLocalFines(updated)
             onSuccess()
             return
         }
@@ -1871,17 +2076,17 @@ class MainViewModel(
             onError("জরিমানা ডিলিট করার অনুমতি শুধুমাত্র অ্যাডমিনের আছে")
             return
         }
+        deletedDocIds.add(fineId)
+        val updated = _fines.value.filterNot { it.id == fineId }
+        _fines.value = updated
+        repository.saveLocalFines(updated)
         if (repository.getCurrentUser() == null) {
-            val updated = _fines.value.filterNot { it.id == fineId }
-            _fines.value = updated
-            repository.saveLocalFines(updated)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
                 repository.deleteFine(fineId)
-                _fines.value = _fines.value.filterNot { it.id == fineId }
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -1896,20 +2101,18 @@ class MainViewModel(
             onError("সদস্য ডিলিট করার অনুমতি শুধুমাত্র অ্যাডমিনের আছে")
             return
         }
+        deletedDocIds.add(memberId)
+        val updated = _members.value.filterNot { it.id == memberId }
+        _members.value = updated
+        _membersUiState.value = UiState.Success(updated)
+        repository.saveLocalMembers(updated)
         if (repository.getCurrentUser() == null) {
-            val updated = _members.value.filterNot { it.id == memberId }
-            _members.value = updated
-            _membersUiState.value = UiState.Success(updated)
-            repository.saveLocalMembers(updated)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
                 repository.deleteMember(memberId)
-                val updated = _members.value.filterNot { it.id == memberId }
-                _members.value = updated
-                _membersUiState.value = UiState.Success(updated)
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -1924,17 +2127,17 @@ class MainViewModel(
             onError("সঞ্চয় এন্ট্রি ডিলিট করার অনুমতি শুধুমাত্র অ্যাডমিনের আছে")
             return
         }
+        deletedDocIds.add(recordId)
+        val updated = _savingsRecords.value.filterNot { it.id == recordId }
+        _savingsRecords.value = updated
+        repository.saveLocalSavings(updated)
         if (repository.getCurrentUser() == null) {
-            val updated = _savingsRecords.value.filterNot { it.id == recordId }
-            _savingsRecords.value = updated
-            repository.saveLocalSavings(updated)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
                 repository.deleteSavingsRecord(recordId)
-                _savingsRecords.value = _savingsRecords.value.filterNot { it.id == recordId }
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -1949,17 +2152,17 @@ class MainViewModel(
             onError("ঋণ এন্ট্রি ডিলিট করার অনুমতি শুধুমাত্র অ্যাডমিনের আছে")
             return
         }
+        deletedDocIds.add(loanId)
+        val updated = _loans.value.filterNot { it.id == loanId }
+        _loans.value = updated
+        repository.saveLocalLoans(updated)
         if (repository.getCurrentUser() == null) {
-            val updated = _loans.value.filterNot { it.id == loanId }
-            _loans.value = updated
-            repository.saveLocalLoans(updated)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
                 repository.deleteLoan(loanId)
-                _loans.value = _loans.value.filterNot { it.id == loanId }
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -1974,17 +2177,17 @@ class MainViewModel(
             onError("কিস্তি এন্ট্রি ডিলিট করার অনুমতি শুধুমাত্র অ্যাডমিনের আছে")
             return
         }
+        deletedDocIds.add(installmentId)
+        val updated = _loanInstallments.value.filterNot { it.id == installmentId }
+        _loanInstallments.value = updated
+        repository.saveLocalLoanInstallments(updated)
         if (repository.getCurrentUser() == null) {
-            val updated = _loanInstallments.value.filterNot { it.id == installmentId }
-            _loanInstallments.value = updated
-            repository.saveLocalLoanInstallments(updated)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
                 repository.deleteLoanInstallment(installmentId)
-                _loanInstallments.value = _loanInstallments.value.filterNot { it.id == installmentId }
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -1999,17 +2202,17 @@ class MainViewModel(
             onError("লেজার এন্ট্রি ডিলিট করার অনুমতি শুধুমাত্র অ্যাডমিনের আছে")
             return
         }
+        deletedDocIds.add(entryId)
+        val updated = _fundLedger.value.filterNot { it.id == entryId }
+        _fundLedger.value = updated
+        repository.saveLocalFundLedger(updated)
         if (repository.getCurrentUser() == null) {
-            val updated = _fundLedger.value.filterNot { it.id == entryId }
-            _fundLedger.value = updated
-            repository.saveLocalFundLedger(updated)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
                 repository.deleteLedgerEntry(entryId)
-                _fundLedger.value = _fundLedger.value.filterNot { it.id == entryId }
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e
@@ -2025,26 +2228,27 @@ class MainViewModel(
             onError("লেজার এন্ট্রি শুধুমাত্র অ্যাডমিন করতে পারবেন")
             return
         }
+        val ledgerId = "ledger_${System.currentTimeMillis()}"
+        val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
+        val updatedLedger = _fundLedger.value + FundLedgerEntry(
+            id = ledgerId,
+            date = date,
+            description = desc,
+            moneyIn = moneyIn,
+            moneyOut = moneyOut,
+            balance = prevBalance + moneyIn - moneyOut,
+            type = if (moneyOut > 0.0 && moneyIn == 0.0) LedgerType.EXPENSE.name else LedgerType.DEPOSIT.name,
+            createdBy = currentUserId
+        )
+        _fundLedger.value = updatedLedger
+        repository.saveLocalFundLedger(updatedLedger)
         if (repository.getCurrentUser() == null) {
-            val prevBalance = _fundLedger.value.lastOrNull()?.balance ?: 0.0
-            val updatedLedger = _fundLedger.value + FundLedgerEntry(
-                id = "ledger_${System.currentTimeMillis()}",
-                date = date,
-                description = desc,
-                moneyIn = moneyIn,
-                moneyOut = moneyOut,
-                balance = prevBalance + moneyIn - moneyOut,
-                type = if (moneyOut > 0.0 && moneyIn == 0.0) LedgerType.EXPENSE.name else LedgerType.DEPOSIT.name,
-                createdBy = currentUserId
-            )
-            _fundLedger.value = updatedLedger
-            repository.saveLocalFundLedger(updatedLedger)
             onSuccess()
             return
         }
         viewModelScope.launch {
             try {
-                repository.appendLedgerEntry(date, desc, moneyIn, moneyOut)
+                repository.appendLedgerEntry(date, desc, moneyIn, moneyOut, docId = ledgerId)
                 onSuccess()
             } catch (e: Exception) {
                 onError(e.message ?: "লেজার এন্ট্রি ব্যর্থ")
@@ -2074,9 +2278,7 @@ class MainViewModel(
             return
         }
         _appSettings.value = settings
-        if (repository.getCurrentUser() == null) {
-            repository.saveLocalAppSettings(settings)
-        }
+        repository.saveLocalAppSettings(settings)
         onSuccess()
         viewModelScope.launch {
             try {
@@ -2184,6 +2386,7 @@ class MainViewModel(
                 }
                 repository.clearAllLocalData()
                 repository.clearAllRoomData()
+                deletedDocIds.clear()
 
                 _members.value = emptyList()
                 _membersUiState.value = UiState.Success(emptyList())
@@ -2240,14 +2443,36 @@ class MainViewModel(
         _updateBannerDismissed.value = true
     }
 
+    fun toggleAutoUpdateEnabled(enabled: Boolean) {
+        val updated = _appSettings.value.copy(autoUpdateEnabled = enabled)
+        _appSettings.value = updated
+        repository.saveLocalAppSettings(updated)
+        if (_userRole.value == UserRole.ADMIN && repository.getCurrentUser() != null) {
+            viewModelScope.launch {
+                try {
+                    repository.updateAppSettings(updated)
+                } catch (_: Exception) {
+                }
+            }
+        }
+        if (enabled) {
+            checkForAppUpdates(force = true)
+        } else {
+            _lastUpdateStatusMessage.value = "স্বয়ংক্রিয় আপডেট যাচাই বন্ধ করা হয়েছে"
+        }
+    }
+
     fun checkForAppUpdates(
         force: Boolean = false,
         onResult: (AppUpdateInfo?, String) -> Unit = { _, _ -> }
     ) {
+        if (!force && !_appSettings.value.autoUpdateEnabled) return
         if (_isCheckingUpdate.value && !force) return
         if (!repository.isOnline()) {
+            val offlineMsg = "আপডেট যাচাই করতে ইন্টারনেট সংযোগ প্রয়োজন"
             if (force) {
-                onResult(null, "আপডেট যাচাই করতে ইন্টারনেট সংযোগ প্রয়োজন")
+                _lastUpdateStatusMessage.value = offlineMsg
+                onResult(null, offlineMsg)
             }
             return
         }
@@ -2259,16 +2484,20 @@ class MainViewModel(
                 if (force && info != null) {
                     _updateBannerDismissed.value = false
                 }
-                if (info != null) {
-                    onResult(info, "নতুন আপডেট পাওয়া গেছে: ${info.latestVersionName}")
+                val message = if (info != null) {
+                    "নতুন আপডেট পাওয়া গেছে: v${info.latestVersionName}"
                 } else {
-                    onResult(null, "আপনি সর্বশেষ সংস্করণই ব্যবহার করছেন ✓")
+                    "আপনি সর্বশেষ সংস্করণই ব্যবহার করছেন ✓"
                 }
+                _lastUpdateStatusMessage.value = message
+                onResult(info, message)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
+                val errMsg = "আপডেট যাচাই করা যায়নি"
                 if (force) {
-                    onResult(null, "আপডেট যাচাই করা যায়নি")
+                    _lastUpdateStatusMessage.value = errMsg
+                    onResult(null, errMsg)
                 }
             } finally {
                 _isCheckingUpdate.value = false

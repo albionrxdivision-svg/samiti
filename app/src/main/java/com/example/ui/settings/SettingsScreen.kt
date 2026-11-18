@@ -42,6 +42,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.BuildConfig
+import com.example.data.cloud.GoogleDriveBackupManager
 import com.example.data.local.StorageQuotaManager
 import com.example.data.model.AppSettings
 import com.example.data.model.AuthSession
@@ -58,6 +59,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.auth.GoogleSignInButton
 import com.example.ui.components.EkotaCompactTopBar
 import com.example.ui.theme.*
+import com.example.util.AppUpdateChecker
 import com.example.util.AppUpdateInfo
 import com.example.util.BengaliUtils
 import com.example.util.PasswordChangeResult
@@ -90,13 +92,18 @@ fun SettingsScreen(
     val aiCallUiState by viewModel.aiCallUiState.collectAsState()
     val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
+    val lastUpdateStatusMessage by viewModel.lastUpdateStatusMessage.collectAsStateWithLifecycle()
 
     var showOrgSettingsDialog by remember { mutableStateOf(false) }
     var showRoleSwitcherDialog by remember { mutableStateOf(false) }
     var showApkManageDialog by remember { mutableStateOf(false) }
     var showOfflineSyncDialog by remember { mutableStateOf(false) }
     var showStorageSettingsDialog by remember { mutableStateOf(false) }
+    var showGoogleDriveDialog by remember { mutableStateOf(false) }
     var showAiAutoCallDialog by remember { mutableStateOf(false) }
+    var driveConnectionState by remember {
+        mutableStateOf(GoogleDriveBackupManager.loadConnectionState(context))
+    }
     var configuredStorageLimitBytes by remember {
         mutableLongStateOf(StorageQuotaManager.getConfiguredLimitBytes(context))
     }
@@ -192,7 +199,8 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
                 .background(ekotaSilverBackgroundBrush())
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .testTag("settings_lazy_column"),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             if (isAdminView) {
@@ -232,24 +240,36 @@ fun SettingsScreen(
                                 onClick = { showRoleSwitcherDialog = true }
                             )
                         }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
-                        val savedUrl = settings.appDownloadUrl.trim()
-                        val updateBadge = when {
-                            availableUpdate != null -> "নতুন আপডেট!"
-                            savedUrl.isNotBlank() -> "v${BuildConfig.VERSION_NAME}"
-                            else -> "v${BuildConfig.VERSION_NAME}"
-                        }
+                    }
+                }
+
+                // SECTION 1B: Mobile App Auto-Update (GitHub Push + Permanent Link)
+                item {
+                    val permanentUrl = AppUpdateChecker.resolvePermanentApkUrl(settings)
+                    val updateBadge = when {
+                        availableUpdate != null -> "নতুন আপডেট!"
+                        settings.autoUpdateEnabled -> "অটো চালু ✓"
+                        else -> "v${BuildConfig.VERSION_NAME}"
+                    }
+                    val updateSubtitle = when {
+                        availableUpdate != null ->
+                            "নতুন সংস্করণ v${availableUpdate!!.latestVersionName} প্রস্তুত • এক ট্যাপে ইন-প্লেস আপডেট"
+                        permanentUrl.isNotBlank() && settings.autoUpdateEnabled ->
+                            "অটো-আপডেট চালু • স্থায়ী লিংক অপরিবর্তনীয় (v${BuildConfig.VERSION_NAME})"
+                        permanentUrl.isNotBlank() ->
+                            "স্থায়ী লিংক প্রস্তুত (v${BuildConfig.VERSION_NAME}) • ম্যানুয়াল যাচাই"
+                        else ->
+                            "GitHub Push অটো-আপডেট ও স্থায়ী APK লিংক সেট করুন"
+                    }
+                    SettingsSectionTitle("মোবাইল অ্যাপ অটো-আপডেট")
+                    SettingsListCard {
                         SettingsListRow(
-                            title = "মোবাইল অ্যাপ আপডেট ও ডাউনলোড (APK)",
-                            subtitle = if (availableUpdate != null) {
-                                "নতুন সংস্করণ v${availableUpdate!!.latestVersionName} প্রস্তুত • ওভাররাইট আপডেট সক্রিয়"
-                            } else {
-                                savedUrl.ifBlank { "অটো-আপডেট যাচাই ও APK ডাউনলোড লিংক" }
-                            },
+                            title = "মোবাইল অ্যাপ অটো-আপডেট (GitHub)",
+                            subtitle = updateSubtitle,
                             icon = Icons.Default.SystemUpdate,
                             iconTint = CardTealGradient.first(),
                             trailingBadge = updateBadge,
-                            trailingBadgeColor = if (availableUpdate != null) EmeraldGreenPrimary else CardTealGradient.first(),
+                            trailingBadgeColor = if (availableUpdate != null || settings.autoUpdateEnabled) EmeraldGreenPrimary else CardTealGradient.first(),
                             testTagName = "settings_item_apk",
                             onClick = { showApkManageDialog = true }
                         )
@@ -306,6 +326,28 @@ fun SettingsScreen(
                             trailingBadgeColor = EmeraldGreenPrimary,
                             testTagName = "settings_storage_limit_item",
                             onClick = { showStorageSettingsDialog = true }
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                        val driveSubtitle = if (driveConnectionState.isConnected) {
+                            val accountLabel = driveConnectionState.accountEmail.ifBlank { "Google Drive" }
+                            val backupInfo = if (driveConnectionState.lastBackupTimeMillis > 0L) {
+                                " • শেষ ব্যাকআপ: ${GoogleDriveBackupManager.formatTimestamp(driveConnectionState.lastBackupTimeMillis)}"
+                            } else {
+                                " • ব্যাকআপের জন্য প্রস্তুত"
+                            }
+                            "সংযুক্ত: $accountLabel$backupInfo"
+                        } else {
+                            "সকল ডাটা নিরাপদে সংরক্ষণের জন্য Google Drive অ্যাকাউন্ট যোগ করুন"
+                        }
+                        SettingsListRow(
+                            title = "Google Drive ডাটা স্টোরেজ (Add)",
+                            subtitle = driveSubtitle,
+                            icon = Icons.Default.AddToDrive,
+                            iconTint = CardBlueGradient.first(),
+                            trailingBadge = if (driveConnectionState.isConnected) "সংযুক্ত ✓" else "যোগ করুন",
+                            trailingBadgeColor = if (driveConnectionState.isConnected) EmeraldGreenPrimary else CardBlueGradient.first(),
+                            testTagName = "settings_google_drive_item",
+                            onClick = { showGoogleDriveDialog = true }
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                         SettingsListRow(
@@ -401,6 +443,21 @@ fun SettingsScreen(
                             testTagName = "settings_offline_sync_card",
                             onClick = { showOfflineSyncDialog = true }
                         )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                        SettingsListRow(
+                            title = "মোবাইল অ্যাপ অটো-আপডেট",
+                            subtitle = if (availableUpdate != null) {
+                                "নতুন আপডেট v${availableUpdate!!.latestVersionName} প্রস্তুত • এক ট্যাপে আপডেট"
+                            } else {
+                                "সংস্করণ v${BuildConfig.VERSION_NAME} • স্থায়ী GitHub লিংক অপরিবর্তনীয়"
+                            },
+                            icon = Icons.Default.SystemUpdate,
+                            iconTint = CardTealGradient.first(),
+                            trailingBadge = if (availableUpdate != null) "নতুন আপডেট!" else if (settings.autoUpdateEnabled) "চালু ✓" else "বন্ধ",
+                            trailingBadgeColor = if (availableUpdate != null || settings.autoUpdateEnabled) EmeraldGreenPrimary else CardTealGradient.first(),
+                            testTagName = "officer_item_apk",
+                            onClick = { showApkManageDialog = true }
+                        )
                     }
                 }
             }
@@ -461,12 +518,16 @@ fun SettingsScreen(
         )
     }
 
-    if (showApkManageDialog && isAdminView) {
+    if (showApkManageDialog) {
         ApkManagementDialog(
             settings = settings,
-            isAdmin = role == UserRole.ADMIN,
+            isAdmin = isAdminView,
             availableUpdate = availableUpdate,
             isCheckingUpdate = isCheckingUpdate,
+            lastUpdateStatusMessage = lastUpdateStatusMessage,
+            onToggleAutoUpdate = { enabled ->
+                viewModel.toggleAutoUpdateEnabled(enabled)
+            },
             onCheckUpdate = {
                 viewModel.checkForAppUpdates(force = true) { _, msg ->
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
@@ -477,8 +538,10 @@ fun SettingsScreen(
                 viewModel.updateSettings(
                     settings = updatedSettings,
                     onSuccess = {
-                        viewModel.checkForAppUpdates(force = false)
-                        onDone(true, "অ্যাপ আপডেট ও ডাউনলোড সেটিংস সংরক্ষিত হয়েছে")
+                        if (updatedSettings.autoUpdateEnabled) {
+                            viewModel.checkForAppUpdates(force = true)
+                        }
+                        onDone(true, "অ্যাপ অটো-আপডেট ও স্থায়ী লিংক সংরক্ষিত হয়েছে")
                     },
                     onError = { err -> onDone(false, err) }
                 )
@@ -510,10 +573,33 @@ fun SettingsScreen(
             } else {
                 null
             },
+            onOpenGoogleDriveStorage = {
+                showStorageSettingsDialog = false
+                showGoogleDriveDialog = true
+            },
             onLimitUpdated = { newLimitBytes ->
                 configuredStorageLimitBytes = newLimitBytes
             },
             onDismiss = { showStorageSettingsDialog = false }
+        )
+    }
+
+    if (showGoogleDriveDialog && isAdminView) {
+        GoogleDriveStorageDialog(
+            canRestore = isRealAdmin,
+            backupJsonProvider = { viewModel.exportFullBackupJson() },
+            onRestoreBackupJson = if (isRealAdmin) {
+                { json, onOk, onErr -> viewModel.restoreBackupFromJson(json, onOk, onErr) }
+            } else {
+                null
+            },
+            onStateUpdated = { updatedState ->
+                driveConnectionState = updatedState
+            },
+            onDismiss = {
+                driveConnectionState = GoogleDriveBackupManager.loadConnectionState(context)
+                showGoogleDriveDialog = false
+            }
         )
     }
 
@@ -963,273 +1049,6 @@ private fun RoleSwitcherDialog(
     )
 }
 
-@Composable
-internal fun ApkManagementDialog(
-    settings: AppSettings,
-    isAdmin: Boolean,
-    availableUpdate: AppUpdateInfo? = null,
-    isCheckingUpdate: Boolean = false,
-    onCheckUpdate: () -> Unit = {},
-    onDismiss: () -> Unit,
-    onSaveSettings: (AppSettings, (Boolean, String) -> Unit) -> Unit
-) {
-    val context = LocalContext.current
-    val savedUrl = settings.appDownloadUrl.trim()
-    var appDownloadUrlInput by remember(settings) { mutableStateOf(settings.appDownloadUrl) }
-    var githubRepoSlugInput by remember(settings) { mutableStateOf(settings.githubRepoSlug) }
-    var latestVersionCodeInput by remember(settings) {
-        mutableStateOf(if (settings.latestVersionCode > 0) settings.latestVersionCode.toString() else "")
-    }
-    var latestVersionNameInput by remember(settings) { mutableStateOf(settings.latestVersionName) }
-    var isSaving by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("অ্যাপ আপডেট ও APK ডাউনলোড", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "বর্তমান ইনস্টলকৃত সংস্করণ: v${BuildConfig.VERSION_NAME} (কোড ${BengaliUtils.toBengaliDigits(BuildConfig.VERSION_CODE)})",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "নতুন APK সরাসরি পুরানো অ্যাপের ওপর ইন্সটল (Update) হবে — বারবার আনইন্সটল করতে হবে না এবং কোনো ডাটা মুছবে না।",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                if (availableUpdate != null) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = EmeraldGreenPrimary.copy(alpha = 0.12f),
-                        border = BorderStroke(1.dp, EmeraldGreenPrimary.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("apk_dialog_update_card")
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = "নতুন আপডেট পাওয়া গেছে: v${availableUpdate.latestVersionName}",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = ekotaSuccessTextColor()
-                            )
-                            if (availableUpdate.releaseNotes.isNotBlank()) {
-                                Text(
-                                    text = availableUpdate.releaseNotes,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            if (availableUpdate.downloadUrl.isNotBlank()) {
-                                Button(
-                                    onClick = { openDownloadUrl(context, availableUpdate.downloadUrl) },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = EmeraldGreenPrimary,
-                                        contentColor = Color.White
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp)
-                                        .testTag("apk_dialog_update_now_button")
-                                ) {
-                                    Icon(Icons.Default.SystemUpdate, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("এখনই আপডেট ডাউনলোড করুন", fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                OutlinedButton(
-                    onClick = onCheckUpdate,
-                    enabled = !isCheckingUpdate,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .testTag("check_app_update_button")
-                ) {
-                    if (isCheckingUpdate) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isCheckingUpdate) "আপডেট যাচাই হচ্ছে..." else "এখনই আপডেট যাচাই করুন",
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                if (savedUrl.isNotBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { openDownloadUrl(context, savedUrl) }
-                            .testTag("apk_link_preview_box")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Default.Link, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Text(
-                                text = savedUrl,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ekotaNavyTextColor(),
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Icon(Icons.Default.OpenInNew, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-
-                    Button(
-                        onClick = { openDownloadUrl(context, savedUrl) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .testTag("download_mobile_app_button"),
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary, contentColor = Color.White)
-                    ) {
-                        Icon(Icons.Default.Download, contentDescription = null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("APK ডাউনলোড ও আপডেট করুন", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Ekota App APK Link", savedUrl))
-                                Toast.makeText(context, "ডাউনলোড লিংক কপি হয়েছে", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("copy_apk_link_button")
-                        ) {
-                            Text("লিংক কপি", maxLines = 1, softWrap = false)
-                        }
-                        OutlinedButton(
-                            onClick = { shareAppDownloadLink(context, settings.orgName, savedUrl) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("share_apk_link_button")
-                        ) {
-                            Text("শেয়ার করুন", maxLines = 1, softWrap = false)
-                        }
-                    }
-                } else {
-                    Text(
-                        text = "GitHub রিলিজ বা সরাসরি APK লিংক নিচে সংরক্ষণ করলে অ্যাপ চালু হলেই স্বয়ংক্রিয় আপডেট নোটিশ দেখাবে।",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                if (isAdmin) {
-                    HorizontalDivider()
-                    OutlinedTextField(
-                        value = appDownloadUrlInput,
-                        onValueChange = { appDownloadUrlInput = it },
-                        label = { Text("APK ডাউনলোড লিংক (URL)") },
-                        placeholder = { Text("https://github.com/user/repo/releases/latest") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("apk_download_url_input")
-                    )
-                    OutlinedTextField(
-                        value = githubRepoSlugInput,
-                        onValueChange = { githubRepoSlugInput = it },
-                        label = { Text("GitHub রেপোজিটরি (ঐচ্ছিক)") },
-                        placeholder = { Text("owner/repo-name") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("apk_github_repo_input")
-                    )
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = latestVersionCodeInput,
-                            onValueChange = { latestVersionCodeInput = it.filter { ch -> ch.isDigit() } },
-                            label = { Text("ভার্সন কোড") },
-                            placeholder = { Text("${BuildConfig.VERSION_CODE + 1}") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = latestVersionNameInput,
-                            onValueChange = { latestVersionNameInput = it },
-                            label = { Text("ভার্সন নাম") },
-                            placeholder = { Text("1.2") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Button(
-                        onClick = {
-                            val normalized = normalizeUrl(appDownloadUrlInput)
-                            if (appDownloadUrlInput.isNotBlank() && normalized == null) {
-                                Toast.makeText(context, "সঠিক ওয়েব লিংক দিন (https:// দিয়ে শুরু)", Toast.LENGTH_SHORT).show()
-                                return@Button
-                            }
-                            isSaving = true
-                            val updatedSettings = settings.copy(
-                                appDownloadUrl = normalized ?: "",
-                                githubRepoSlug = githubRepoSlugInput.trim(),
-                                latestVersionCode = latestVersionCodeInput.toIntOrNull() ?: 0,
-                                latestVersionName = latestVersionNameInput.trim()
-                            )
-                            onSaveSettings(updatedSettings) { ok, msg ->
-                                isSaving = false
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        enabled = !isSaving,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .testTag("save_apk_url_button"),
-                        colors = ButtonDefaults.buttonColors(containerColor = NavyBlueSecondary, contentColor = Color.White)
-                    ) {
-                        Text(if (isSaving) "সংরক্ষণ হচ্ছে..." else "সেটিংস সংরক্ষণ করুন", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("বন্ধ করুন") }
-        }
-    )
-}
 
 @Composable
 fun OfflineCloudSyncDialog(
