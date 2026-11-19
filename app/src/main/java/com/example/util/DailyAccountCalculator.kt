@@ -19,7 +19,8 @@ data class DailyAccountSummary(
     val otherInflowTotal: Double,
     val loanDisbursedTotal: Double,
     val otherOutflowTotal: Double,
-    val runningBalance: Double
+    val runningBalance: Double,
+    val previousBalance: Double = 0.0
 ) {
     val grossCollection: Double
         get() = savingsTotal + loanCollectedTotal + otherInflowTotal
@@ -37,7 +38,8 @@ data class DailyHisabOverview(
     val totalLoanCollected: Double,
     val totalOtherInflow: Double,
     val totalWentOut: Double,
-    val currentNetBalance: Double
+    val currentNetBalance: Double,
+    val summariesChronological: List<DailyAccountSummary> = emptyList()
 )
 
 object DailyAccountCalculator {
@@ -97,6 +99,27 @@ object DailyAccountCalculator {
         return null
     }
 
+    private fun parseSortKey(rawDate: String): Long {
+        val ascii = toAsciiDigits(rawDate.trim())
+            .replace('-', '/')
+            .replace('.', '/')
+        val parts = ascii.split("/")
+        if (parts.size == 3) {
+            val p0 = parts[0].toLongOrNull()
+            val p1 = parts[1].toLongOrNull()
+            val p2 = parts[2].toLongOrNull()
+            if (p0 != null && p1 != null && p2 != null) {
+                return if (parts[0].length == 4) {
+                    p0 * 10000L + p1 * 100L + p2
+                } else {
+                    val year = if (p2 < 100L) 2000L + p2 else p2
+                    year * 10000L + p1 * 100L + p0
+                }
+            }
+        }
+        return Long.MAX_VALUE
+    }
+
     fun normalizeDateKey(rawDate: String): String {
         val millis = parseFlexibleDateMillis(rawDate)
         if (millis != null) {
@@ -129,7 +152,8 @@ object DailyAccountCalculator {
                 MutableDayBucket(
                     dateKey = key,
                     displayDate = formatDisplayDate(rawDate),
-                    sortMillis = parseFlexibleDateMillis(rawDate) ?: Long.MAX_VALUE
+                    sortMillis = parseFlexibleDateMillis(rawDate) ?: Long.MAX_VALUE,
+                    sortOrder = parseSortKey(rawDate)
                 )
             }
         }
@@ -162,11 +186,12 @@ object DailyAccountCalculator {
         }
 
         val sortedChronological = buckets.values.sortedWith(
-            compareBy<MutableDayBucket>({ it.sortMillis }, { it.dateKey })
+            compareBy<MutableDayBucket>({ it.sortOrder }, { it.sortMillis }, { it.dateKey })
         )
 
         var runningBalance = 0.0
         val summariesChronological = sortedChronological.map { b ->
+            val prevBalance = runningBalance
             val dayNet = (b.savingsTotal + b.loanCollectedTotal + b.otherInflowTotal) -
                 (b.loanDisbursedTotal + b.otherOutflowTotal)
             runningBalance += dayNet
@@ -179,7 +204,8 @@ object DailyAccountCalculator {
                 otherInflowTotal = b.otherInflowTotal,
                 loanDisbursedTotal = b.loanDisbursedTotal,
                 otherOutflowTotal = b.otherOutflowTotal,
-                runningBalance = runningBalance
+                runningBalance = runningBalance,
+                previousBalance = prevBalance
             )
         }
 
@@ -189,7 +215,8 @@ object DailyAccountCalculator {
             totalLoanCollected = summariesChronological.sumOf { it.loanCollectedTotal },
             totalOtherInflow = summariesChronological.sumOf { it.otherInflowTotal },
             totalWentOut = summariesChronological.sumOf { it.wentOutTotal },
-            currentNetBalance = runningBalance
+            currentNetBalance = runningBalance,
+            summariesChronological = summariesChronological
         )
     }
 
@@ -197,6 +224,7 @@ object DailyAccountCalculator {
         val dateKey: String,
         val displayDate: String,
         val sortMillis: Long,
+        val sortOrder: Long = Long.MAX_VALUE,
         var savingsTotal: Double = 0.0,
         var loanCollectedTotal: Double = 0.0,
         var otherInflowTotal: Double = 0.0,

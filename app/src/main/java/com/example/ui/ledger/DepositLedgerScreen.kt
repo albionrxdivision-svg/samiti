@@ -9,6 +9,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.EventNote
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -81,157 +83,172 @@ fun DepositLedgerScreen(
             )
         }
     ) { paddingValues ->
-        LazyColumn(
+        val isDark = LocalIsDarkEkotaTheme.current
+        val sheetHeaderBg = if (isDark) Color(0xFF1A4352) else Color(0xFF9ED2E3)
+        val sheetHeaderText = if (isDark) Color(0xFFE6F6FA) else Color(0xFF0A1418)
+        val sheetSurfaceBg = if (isDark) MaterialTheme.colorScheme.surface else Color.White
+        val sheetBorderColor = if (isDark) {
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+        } else {
+            Color(0xFFB7C9D6)
+        }
+        val chronologicalSummaries = hisabOverview.summariesChronological
+
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
                 .background(ekotaSilverBackgroundBrush())
-                .testTag("daily_hisab_list"),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Overall Summary Card
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            // Mode switcher chips: Date-wise Summary Sheet vs Detailed Ledger
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 600.dp)
+                    .padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.CalendarMonth,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = "তারিখ অনুযায়ী হিসাব",
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = HeaderSlateNavy,
+                        selectedLabelColor = Color.White,
+                        selectedLeadingIconColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("hisab_tab_daily")
+                )
+
+                FilterChip(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = "বিস্তারিত লেনদেন",
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = HeaderSlateNavy,
+                        selectedLabelColor = Color.White,
+                        selectedLeadingIconColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("hisab_tab_detailed")
+                )
+            }
+
+            // Overall Top Cash Banner (pinned): ক্যাশ মোট= <balance> টাকা
+            val hasSheetRowsBelow = selectedTab == 0 && chronologicalSummaries.isNotEmpty()
+            val bannerShape = if (hasSheetRowsBelow) {
+                RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+            } else {
+                RoundedCornerShape(12.dp)
+            }
+            Surface(
+                shape = bannerShape,
+                color = sheetHeaderBg,
+                border = BorderStroke(1.dp, sheetBorderColor),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 600.dp)
+                    .then(
+                        if (selectedTab == 1) Modifier.padding(bottom = 10.dp) else Modifier
+                    )
+                    .testTag("hisab_summary_card")
+            ) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("hisab_summary_card")
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Brush.linearGradient(colors = CardTealGradient))
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "সর্বমোট জমা (বর্তমান ব্যালেন্স)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.95f)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = BengaliUtils.formatTaka(hisabOverview.currentNetBalance),
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            HorizontalDivider(color = Color.White.copy(alpha = 0.28f))
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                HisabSummaryStatColumn(
-                                    label = "মোট সঞ্চয়",
-                                    amount = hisabOverview.totalSavings,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                HisabSummaryStatColumn(
-                                    label = "মোট ঋণ আদায়",
-                                    amount = hisabOverview.totalLoanCollected,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                HisabSummaryStatColumn(
-                                    label = "বাইরে গেছে",
-                                    amount = hisabOverview.totalWentOut,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Mode switcher chips: Date-wise Summary List vs Detailed Ledger
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.CalendarMonth,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = "তারিখ অনুযায়ী হিসাব",
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = HeaderSlateNavy,
-                            selectedLabelColor = Color.White,
-                            selectedLeadingIconColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("hisab_tab_daily")
+                    Text(
+                        text = "ক্যাশ মোট=",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = sheetHeaderText,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(0.56f)
                     )
-
-                    FilterChip(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.ReceiptLong,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = "বিস্তারিত লেনদেন",
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = HeaderSlateNavy,
-                            selectedLabelColor = Color.White,
-                            selectedLeadingIconColor = Color.White
-                        ),
+                    Text(
+                        text = BengaliUtils.toBengaliDigits(hisabOverview.currentNetBalance),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = sheetHeaderText,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.weight(0.28f)
+                    )
+                    Text(
+                        text = "টাকা",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = sheetHeaderText,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("hisab_tab_detailed")
+                            .weight(0.16f)
+                            .padding(start = 8.dp)
                     )
                 }
             }
 
-            if (selectedTab == 0) {
-                if (hisabOverview.summariesNewestFirst.isEmpty()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .testTag("daily_hisab_list"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                contentPadding = PaddingValues(bottom = 12.dp)
+            ) {
+                if (selectedTab == 0) {
+                if (chronologicalSummaries.isEmpty()) {
                     item {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .widthIn(max = 600.dp)
                                 .padding(vertical = 48.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(
-                                    imageVector = Icons.Default.EventNote,
+                                    imageVector = Icons.AutoMirrored.Filled.EventNote,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                     modifier = Modifier.size(44.dp)
@@ -247,13 +264,33 @@ fun DepositLedgerScreen(
                     }
                 } else {
                     items(
-                        items = hisabOverview.summariesNewestFirst,
-                        key = { it.dateKey }
-                    ) { summary ->
-                        DailyHisabDateCard(
-                            summary = summary,
-                            showRunningBalance = hisabOverview.summariesNewestFirst.size > 1
-                        )
+                        count = chronologicalSummaries.size,
+                        key = { index -> chronologicalSummaries[index].dateKey }
+                    ) { index ->
+                        val summary = chronologicalSummaries[index]
+                        val isFirst = index == 0
+                        val isLast = index == chronologicalSummaries.lastIndex
+                        val blockShape = if (isLast) {
+                            RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+                        } else {
+                            RoundedCornerShape(0.dp)
+                        }
+                        Surface(
+                            shape = blockShape,
+                            color = sheetSurfaceBg,
+                            border = BorderStroke(0.5.dp, sheetBorderColor.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 600.dp)
+                                .testTag("daily_hisab_card_${summary.dateKey}")
+                        ) {
+                            DailyHisabSheetBlock(
+                                summary = summary,
+                                isFirst = isFirst,
+                                isLast = isLast,
+                                hasMultipleDates = chronologicalSummaries.size > 1
+                            )
+                        }
                     }
                 }
             } else {
@@ -262,6 +299,7 @@ fun DepositLedgerScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .widthIn(max = 600.dp)
                                 .padding(vertical = 48.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -274,9 +312,17 @@ fun DepositLedgerScreen(
                     }
                 } else {
                     items(ledgerEntries.reversed()) { entry ->
-                        LedgerEntryCard(entry = entry)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 600.dp)
+                                .padding(bottom = 8.dp)
+                        ) {
+                            LedgerEntryCard(entry = entry)
+                        }
                     }
                 }
+            }
             }
         }
     }
@@ -298,264 +344,212 @@ fun DepositLedgerScreen(
     }
 }
 
-@Composable
-private fun HisabSummaryStatColumn(
-    label: String,
-    amount: Double,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.92f),
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = BengaliUtils.formatTaka(amount),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.ExtraBold,
-            color = Color.White,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
+private data class SheetLineEntry(
+    val label: String,
+    val amount: Double,
+    val isOutflow: Boolean = false
+)
 
 @Composable
-fun DailyHisabDateCard(
+fun DailyHisabSheetBlock(
     summary: DailyAccountSummary,
-    showRunningBalance: Boolean
+    isFirst: Boolean,
+    isLast: Boolean,
+    hasMultipleDates: Boolean
 ) {
     val isDark = LocalIsDarkEkotaTheme.current
-    val hasOutflow = summary.wentOutTotal > 0.0
-    val accent = if (hasOutflow) VibrantCardAccents[7] else VibrantCardAccents[2]
+    val dividerBlue = if (isDark) Color(0xFF60A5FA) else Color(0xFF3A70B5)
+    val normalInk = MaterialTheme.colorScheme.onSurface
+    val dangerInk = ekotaDangerTextColor()
+    val dateLabel = BengaliUtils.toBengaliDigits(summary.dateKey)
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isDark) MaterialTheme.colorScheme.surface else Color.White
-        ),
-        border = BorderStroke(1.dp, accent.gradient.first().copy(alpha = 0.35f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    val entryLines = remember(summary) {
+        buildList {
+            if (summary.savingsTotal > 0.0) {
+                add(SheetLineEntry(label = "সঞ্চয়=", amount = summary.savingsTotal))
+            }
+            if (summary.loanCollectedTotal > 0.0) {
+                val loanLabel = if (summary.loanDisbursedTotal > 0.0) "ঋণ আদায়=" else "ঋণ="
+                add(SheetLineEntry(label = loanLabel, amount = summary.loanCollectedTotal))
+            }
+            if (summary.otherInflowTotal > 0.0) {
+                add(SheetLineEntry(label = "অন্যান্য জমা=", amount = summary.otherInflowTotal))
+            }
+            if (summary.loanDisbursedTotal > 0.0) {
+                add(
+                    SheetLineEntry(
+                        label = "ঋণ (প্রদান)=",
+                        amount = summary.loanDisbursedTotal,
+                        isOutflow = true
+                    )
+                )
+            }
+            if (summary.otherOutflowTotal > 0.0) {
+                add(
+                    SheetLineEntry(
+                        label = "অন্যান্য খরচ=",
+                        amount = summary.otherOutflowTotal,
+                        isOutflow = true
+                    )
+                )
+            }
+            if (isEmpty()) {
+                add(SheetLineEntry(label = "সঞ্চয়=", amount = 0.0))
+            }
+        }
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("daily_hisab_card_${summary.dateKey}")
+            .padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            // Date Header Strip
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                HeaderSlateNavy.copy(alpha = 0.94f),
-                                EmeraldGreenPrimary.copy(alpha = 0.90f)
-                            )
-                        )
-                    )
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CalendarToday,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "তারিখ: ${summary.displayDate}",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+        // Entry rows: date appears on the first line of each date block
+        entryLines.forEachIndexed { idx, line ->
+            val valueColor = if (line.isOutflow) dangerInk else normalInk
+            HisabSheetRow(
+                dateText = if (idx == 0) dateLabel else "",
+                labelText = line.label,
+                amountText = BengaliUtils.toBengaliDigits(line.amount),
+                unitText = "টাকা",
+                isBold = false,
+                labelColor = if (line.isOutflow) dangerInk else normalInk,
+                amountColor = valueColor,
+                unitColor = valueColor
+            )
+        }
 
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color.White.copy(alpha = 0.22f)
-                ) {
-                    Text(
-                        text = "মোট জমা ${BengaliUtils.formatTaka(summary.netDeposit)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                        maxLines = 1,
-                        softWrap = false,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-            }
+        // First blue horizontal line under date entries
+        HorizontalDivider(
+            thickness = 2.dp,
+            color = dividerBlue,
+            modifier = Modifier.padding(vertical = 3.dp)
+        )
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                HisabLineRow(
-                    label = "মোট সঞ্চয়",
-                    valueText = "= ${BengaliUtils.formatTaka(summary.savingsTotal)}",
-                    valueColor = ekotaSuccessTextColor()
-                )
-                HisabLineRow(
-                    label = "মোট ঋণ",
-                    valueText = "= ${BengaliUtils.formatTaka(summary.loanCollectedTotal)}",
-                    valueColor = MaterialTheme.colorScheme.primary
-                )
+        // Day net total: মোট আদায়=
+        HisabSheetRow(
+            dateText = "",
+            labelText = "মোট আদায়=",
+            amountText = BengaliUtils.toBengaliDigits(summary.netDeposit),
+            unitText = "টাকা",
+            isBold = true,
+            labelColor = normalInk,
+            amountColor = if (summary.netDeposit < 0.0) dangerInk else normalInk,
+            unitColor = normalInk
+        )
 
-                if (summary.otherInflowTotal > 0.0) {
-                    HisabLineRow(
-                        label = "অন্যান্য জমা",
-                        valueText = "= ${BengaliUtils.formatTaka(summary.otherInflowTotal)}",
-                        valueColor = ekotaSuccessTextColor()
-                    )
-                }
+        if (!isFirst) {
+            // Previous balance carried forward: ক্যাশ জমা=
+            HisabSheetRow(
+                dateText = "",
+                labelText = "ক্যাশ জমা=",
+                amountText = BengaliUtils.toBengaliDigits(summary.previousBalance),
+                unitText = "টাকা",
+                isBold = true,
+                labelColor = normalInk,
+                amountColor = if (summary.previousBalance < 0.0) dangerInk else normalInk,
+                unitColor = normalInk
+            )
 
-                if (hasOutflow) {
-                    HisabLineRow(
-                        label = "সঞ্চয় ও ঋণ যোগ",
-                        valueText = "= ${BengaliUtils.formatTaka(summary.grossCollection)}",
-                        valueColor = MaterialTheme.colorScheme.onSurface
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = ekotaBadgeDangerBg(),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 7.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "বাইরে গেছে (ঋণ/খরচ)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = ekotaDangerTextColor()
-                            )
-                            Text(
-                                text = "- ${BengaliUtils.formatTaka(summary.wentOutTotal)}",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = ekotaDangerTextColor(),
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
-                    }
-                } else {
-                    HisabLineRow(
-                        label = "বাইরে গেছে",
-                        valueText = "${BengaliUtils.formatTaka(0.0)} (বাইরে যায়নি)",
-                        valueColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            // Second blue horizontal line after combining day net + previous cash
+            HorizontalDivider(
+                thickness = 2.dp,
+                color = dividerBlue,
+                modifier = Modifier.padding(vertical = 3.dp)
+            )
 
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 2.dp),
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
-                )
-
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = ekotaBadgeSuccessBg(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "মোট জমা",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = ekotaSuccessTextColor()
-                        )
-                        Text(
-                            text = "= ${BengaliUtils.formatTaka(summary.netDeposit)}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = ekotaSuccessTextColor(),
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-
-                if (showRunningBalance) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "এই তারিখ পর্যন্ত সর্বমোট জমা",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = BengaliUtils.formatTaka(summary.runningBalance),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
+            // Combined running balance (final block shows ক্যাশ মোট=, intermediate shows ক্যাশ জমা=)
+            val combinedLabel = if (isLast) "ক্যাশ মোট=" else "ক্যাশ জমা="
+            HisabSheetRow(
+                dateText = "",
+                labelText = combinedLabel,
+                amountText = BengaliUtils.toBengaliDigits(summary.runningBalance),
+                unitText = "টাকা",
+                isBold = true,
+                labelColor = normalInk,
+                amountColor = if (summary.runningBalance < 0.0) dangerInk else normalInk,
+                unitColor = normalInk
+            )
+        } else if (!hasMultipleDates) {
+            // Single-date ledger also closes cleanly with ক্যাশ মোট=
+            HorizontalDivider(
+                thickness = 2.dp,
+                color = dividerBlue,
+                modifier = Modifier.padding(vertical = 3.dp)
+            )
+            HisabSheetRow(
+                dateText = "",
+                labelText = "ক্যাশ মোট=",
+                amountText = BengaliUtils.toBengaliDigits(summary.runningBalance),
+                unitText = "টাকা",
+                isBold = true,
+                labelColor = normalInk,
+                amountColor = if (summary.runningBalance < 0.0) dangerInk else normalInk,
+                unitColor = normalInk
+            )
         }
     }
 }
 
 @Composable
-private fun HisabLineRow(
-    label: String,
-    valueText: String,
-    valueColor: Color
+private fun HisabSheetRow(
+    dateText: String,
+    labelText: String,
+    amountText: String,
+    unitText: String,
+    isBold: Boolean,
+    labelColor: Color,
+    amountColor: Color,
+    unitColor: Color
 ) {
+    val weight = if (isBold) FontWeight.Bold else FontWeight.Medium
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = label,
+            text = dateText,
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(0.25f)
         )
         Text(
-            text = valueText,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Bold,
-            color = valueColor,
+            text = labelText,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = weight,
+            color = labelColor,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
             maxLines = 1,
-            softWrap = false
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(0.40f)
+        )
+        Text(
+            text = amountText,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = weight,
+            color = amountColor,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.weight(0.20f)
+        )
+        Text(
+            text = unitText,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = weight,
+            color = unitColor,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier
+                .weight(0.15f)
+                .padding(start = 6.dp)
         )
     }
 }

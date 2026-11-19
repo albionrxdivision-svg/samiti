@@ -281,15 +281,82 @@ class DailyHisabAndHeaderTest {
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("top_add_ledger_entry_button").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("hisab_summary_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("daily_hisab_list").assertIsDisplayed()
         composeTestRule.onNodeWithTag("daily_hisab_list")
             .performScrollToNode(androidx.compose.ui.test.hasTestTag("daily_hisab_card_11/11/26"))
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("daily_hisab_card_11/11/26").assertIsDisplayed()
-        composeTestRule.onNodeWithText("তারিখ: ১১/১১/২০২৬").assertIsDisplayed()
-        composeTestRule.onNodeWithText("বাইরে গেছে (ঋণ/খরচ)").assertIsDisplayed()
-        composeTestRule.onNodeWithText("- ৳২০০").assertIsDisplayed()
-        assertTrue(composeTestRule.onAllNodesWithText("= ৳২০০").fetchSemanticsNodes().size >= 3)
+        composeTestRule.onNodeWithText("১১/১১/২৬").assertIsDisplayed()
+        composeTestRule.onNodeWithText("সঞ্চয়=").assertIsDisplayed()
+        composeTestRule.onNodeWithText("ঋণ আদায়=").assertIsDisplayed()
+        composeTestRule.onNodeWithText("ঋণ (প্রদান)=").assertIsDisplayed()
+        composeTestRule.onNodeWithText("মোট আদায়=").assertIsDisplayed()
+        assertEquals(2, composeTestRule.onAllNodesWithText("ক্যাশ মোট=").fetchSemanticsNodes().size)
+        assertTrue(composeTestRule.onAllNodesWithText("২০০").fetchSemanticsNodes().size >= 5)
+    }
+
+    @Test
+    fun dailyLedgerSheetMatchesChronologicalCarryForwardExample() {
+        val savingsList = listOf(
+            SavingsRecord(id = "s1", memberId = "m1", collectionDate = "18/02/26", amount = 3000.0, isPaid = true, status = TransactionStatus.APPROVED.name),
+            SavingsRecord(id = "s2", memberId = "m1", collectionDate = "25/02/26", amount = 3000.0, isPaid = true, status = TransactionStatus.APPROVED.name),
+            SavingsRecord(id = "s3", memberId = "m1", collectionDate = "30/02/26", amount = 2500.0, isPaid = true, status = TransactionStatus.APPROVED.name)
+        )
+        val loansList = listOf(
+            Loan(id = "l_out", memberId = "m2", loanDate = "25/02/26", principal = 2000.0)
+        )
+        val installmentsList = listOf(
+            LoanInstallment(id = "i1", loanId = "l_out", installmentDate = "30/02/26", amount = 2500.0, isMissed = false, status = TransactionStatus.APPROVED.name)
+        )
+        dataStore.saveSavings(savingsList)
+        dataStore.saveLoans(loansList)
+        dataStore.saveLoanInstallments(installmentsList)
+
+        val overview = DailyAccountCalculator.buildOverview(
+            savingsRecords = savingsList,
+            loanInstallments = installmentsList,
+            loans = loansList,
+            fundLedger = emptyList()
+        )
+        assertEquals(3, overview.summariesChronological.size)
+        val day1 = overview.summariesChronological[0]
+        val day2 = overview.summariesChronological[1]
+        val day3 = overview.summariesChronological[2]
+
+        assertEquals("18/02/26", day1.dateKey)
+        assertEquals(3000.0, day1.netDeposit, 0.001)
+        assertEquals(0.0, day1.previousBalance, 0.001)
+        assertEquals(3000.0, day1.runningBalance, 0.001)
+
+        assertEquals("25/02/26", day2.dateKey)
+        assertEquals(1000.0, day2.netDeposit, 0.001)
+        assertEquals(3000.0, day2.previousBalance, 0.001)
+        assertEquals(4000.0, day2.runningBalance, 0.001)
+
+        assertEquals("30/02/26", day3.dateKey)
+        assertEquals(5000.0, day3.netDeposit, 0.001)
+        assertEquals(4000.0, day3.previousBalance, 0.001)
+        assertEquals(9000.0, day3.runningBalance, 0.001)
+        assertEquals(9000.0, overview.currentNetBalance, 0.001)
+
+        val viewModel = MainViewModel(EkotaRepository(context), "admin_nitai")
+        composeTestRule.setContent {
+            EkotaSamitiTheme {
+                DepositLedgerScreen(viewModel = viewModel, onNavigateBack = {})
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("১৮/০২/২৬").assertIsDisplayed()
+        composeTestRule.onNodeWithText("২৫/০২/২৬").assertIsDisplayed()
+        composeTestRule.onNodeWithText("১০০০").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("daily_hisab_list")
+            .performScrollToNode(androidx.compose.ui.test.hasTestTag("daily_hisab_card_30/02/26"))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("৩০/০২/২৬").assertIsDisplayed()
+        composeTestRule.onNodeWithText("৫০০০").assertIsDisplayed()
+        assertTrue(composeTestRule.onAllNodesWithText("৯০০০").fetchSemanticsNodes().size >= 2)
     }
 
     @Test
